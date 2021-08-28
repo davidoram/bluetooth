@@ -127,19 +127,35 @@ func NewHPSService() *gatt.Service {
 		})
 
 	// Receive Headers
-	s.AddCharacteristic(gatt.UUID16(HTTPHeadersID)).HandleWriteFunc(
+	hc := s.AddCharacteristic(gatt.UUID16(HTTPHeadersID))
+	hc.HandleWriteFunc(
 		func(r gatt.Request, data []byte) (status byte) {
 			headers = string(data)
 			log.Println("headers:", headers)
 			return gatt.StatusSuccess
 		})
+	hc.HandleReadFunc(
+		func(rsp gatt.ResponseWriter, req *gatt.ReadRequest) {
+			err := resp.Header.WriteSubset(rsp, nil)
+			if err != nil {
+				log.Printf("HTTP Header read err: %v", err)
+			}
+		})
 
 	// Receive Entity Body
-	s.AddCharacteristic(gatt.UUID16(HTTPEntityBodyID)).HandleWriteFunc(
+	hb := s.AddCharacteristic(gatt.UUID16(HTTPEntityBodyID))
+	hb.HandleWriteFunc(
 		func(r gatt.Request, data []byte) (status byte) {
 			body = string(data)
 			log.Println("entityBody:", body)
 			return gatt.StatusSuccess
+		})
+	hb.HandleReadFunc(
+		func(rsp gatt.ResponseWriter, req *gatt.ReadRequest) {
+			_, err := rsp.Write(respBody)
+			if err != nil {
+				log.Printf("HTTP body read err: %v", err)
+			}
 		})
 
 	// Receive control point, this triggers the HTTP request to occur
@@ -185,24 +201,6 @@ func NewHPSService() *gatt.Service {
 			_, err := n.Write(b)
 			if err != nil {
 				log.Printf("HTTP Status notify err: %v", err)
-			}
-		})
-
-	// Read Headers
-	s.AddCharacteristic(gatt.UUID16(HTTPHeadersID)).HandleReadFunc(
-		func(rsp gatt.ResponseWriter, req *gatt.ReadRequest) {
-			err := resp.Header.WriteSubset(rsp, nil)
-			if err != nil {
-				log.Printf("HTTP Header read err: %v", err)
-			}
-		})
-
-	// Read Body
-	s.AddCharacteristic(gatt.UUID16(HTTPEntityBodyID)).HandleReadFunc(
-		func(rsp gatt.ResponseWriter, req *gatt.ReadRequest) {
-			_, err := rsp.Write(respBody)
-			if err != nil {
-				log.Printf("HTTP body read err: %v", err)
 			}
 		})
 
