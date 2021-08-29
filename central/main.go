@@ -13,11 +13,14 @@ import (
 	"log"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/davidoram/bluetooth/hps"
 	"github.com/paypal/gatt"
 	"github.com/paypal/gatt/examples/option"
 )
+
+type arrayStr []string
 
 var (
 	// id          *string
@@ -25,18 +28,30 @@ var (
 
 	uri     *string
 	u       *url.URL
-	headers *string
+	headers arrayStr
 	body    *string
 	verb    *string
 
 	done = make(chan struct{})
 )
 
+func (i *arrayStr) String() string {
+	return strings.Join([]string(*i), "\n")
+}
+
+func (i *arrayStr) Set(value string) error {
+	if len(strings.Split(value, "=")) != 2 {
+		return fmt.Errorf("Invalid header format, expect 'key=value'")
+	}
+	*i = append(*i, value)
+	return nil
+}
+
 func init() {
 	// id = flag.String("id", hps.PeripheralID, "Peripheral ID to scan for")
 	deviceName = flag.String("name", hps.DeviceName, "Device name to scan for")
 	uri = flag.String("uri", "http://localhost:8100/hello.txt", "uri")
-	headers = flag.String("headers", "", "HTTP headers to send - NOT YET IMPLEMENTED")
+	flag.Var(&headers, "header", `HTTP headers. eg: -header "Accept=text/plain" -header "X-API-KEY=xyzabc"`)
 	body = flag.String("body", "", "HTTP body to POST/PUT")
 	verb = flag.String("verb", "GET", "HTTP verb, eg: GET, PUT, POST, PATCH, DELETE")
 }
@@ -140,9 +155,6 @@ func parseService(p gatt.Peripheral) {
 		log.Printf("%s %s", msg, name)
 	}
 
-	for _, d := range uriChr.Descriptors() {
-		d.Handle()
-	}
 }
 
 func callService(p gatt.Peripheral) error {
@@ -155,17 +167,30 @@ func callService(p gatt.Peripheral) error {
 		log.Printf("Error: Setting URI, err: %s", err)
 		return err
 	}
-	_, err = p.ReadCharacteristic(uriChr)
+	// _, err = p.ReadCharacteristic(uriChr)
+	// if err != nil {
+	// 	log.Printf("Error: Reading URI response, err: %s", err)
+	// 	return err
+	// }
+
+	log.Println("set Headers")
+	err = p.WriteCharacteristic(hdrsChr, []byte(headers.String()), true)
 	if err != nil {
-		log.Printf("Error: Reading URI response, err: %s", err)
+		log.Printf("Error: Setting Headers, err: %s", err)
 		return err
 	}
 
-	_, err = p.ReadCharacteristic(uriChr)
+	log.Println("set Body")
+	err = p.WriteCharacteristic(bodyChr, []byte(*body), true)
 	if err != nil {
-		log.Printf("Error: Reading URI response, err: %s", err)
+		log.Printf("Error: Setting Body, err: %s", err)
 		return err
 	}
+	// _, err = p.ReadCharacteristic(bodyChr)
+	// if err != nil {
+	// 	log.Printf("Error: Reading Body response, err: %s", err)
+	// 	return err
+	// }
 
 	log.Println("set control")
 	code, err := verbPayload(*verb, u.Scheme)
@@ -178,12 +203,15 @@ func callService(p gatt.Peripheral) error {
 		log.Printf("Error: Setting URI, err: %s", err)
 		return err
 	}
-	buf, err := p.ReadCharacteristic(controlChr)
-	if err != nil {
-		log.Printf("Error: Reading Control response, err: %s", err)
-		return err
-	}
-	log.Printf("Response: %v", buf)
+	// buf, err := p.ReadCharacteristic(controlChr)
+	// if err != nil {
+	// 	log.Printf("Error: Reading Control response, err: %s", err)
+	// 	return err
+	// }
+	// log.Printf("Response: %v", buf)
+
+	log.Printf("Waiting for 5 seconds to get some notifiations, if any.\n")
+	time.Sleep(5 * time.Second)
 
 	return nil
 }
