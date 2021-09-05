@@ -53,7 +53,7 @@ var (
 	respBody []byte
 )
 
-func sendRequest() error {
+func sendRequest(scc *gatt.Characteristic) error {
 	// Create client
 	client := &http.Client{}
 
@@ -94,6 +94,8 @@ func sendRequest() error {
 	log.Println("response Headers : ", resp.Header)
 	log.Println("response Body    : ", string(respBody))
 
+	log.Printf("-------------> HTTP Status notify ")
+	scc.SetValue([]byte{200, 0, 0})
 	return nil
 }
 
@@ -144,6 +146,7 @@ func NewHPSService() *gatt.Service {
 		})
 
 	// Receive control point, this triggers the HTTP request to occur
+	scc := s.AddCharacteristic(gatt.UUID16(hps.HTTPStatusCodeID))
 	s.AddCharacteristic(gatt.UUID16(hps.HTTPControlPointID)).HandleWriteFunc(
 		func(r gatt.Request, data []byte) (status byte) {
 			log.Println("write controlPoint")
@@ -171,12 +174,16 @@ func NewHPSService() *gatt.Service {
 			log.Println("protocol:", protocol)
 
 			// TODO - perform the HTTP request here
-			go sendRequest()
+			go sendRequest(scc)
 
 			return gatt.StatusSuccess
 		})
 
-	s.AddCharacteristic(gatt.UUID16(hps.HTTPStatusCodeID)).HandleNotifyFunc(
+	scc.HandleWriteFunc(func(r gatt.Request, data []byte) (status byte) {
+		log.Println("--->Status code write:", string(data))
+		return gatt.StatusSuccess
+	})
+	scc.HandleNotifyFunc(
 		func(r gatt.Request, n gatt.Notifier) {
 			log.Println("notify status code")
 			var statusCode uint16 = 200
