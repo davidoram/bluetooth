@@ -131,27 +131,80 @@ func parseService(p gatt.Peripheral) {
 	if err != nil {
 		log.Printf("Error: Failed to discover characteristics, err: %s\n", err)
 	}
-
+	log.Printf("Service has %d characteristics", len(cs))
 	for _, c := range cs {
 		msg := "Characteristic  " + c.UUID().String()
-		name := "Unknown"
+		name := c.Name()
 		switch c.UUID().String() {
 		case gatt.UUID16(hps.HTTPURIID).String():
-			name = "URI"
 			uriChr = c
 		case gatt.UUID16(hps.HTTPHeadersID).String():
-			name = "Headers"
 			hdrsChr = c
 		case gatt.UUID16(hps.HTTPEntityBodyID).String():
-			name = "Body"
 			bodyChr = c
 		case gatt.UUID16(hps.HTTPControlPointID).String():
-			name = "Control Point"
 			controlChr = c
 		case gatt.UUID16(hps.HTTPStatusCodeID).String():
-			name = "Status code"
 			statusChr = c
 		}
+
+		// Read the characteristic, if possible.
+		if (c.Properties() & gatt.CharRead) != 0 {
+			b, err := p.ReadCharacteristic(c)
+			if err != nil {
+				fmt.Printf("Failed to read characteristic, err: %s\n", err)
+				continue
+			}
+			fmt.Printf("    value         %x | %q\n", b, b)
+		}
+
+		// Discovery descriptors
+		ds, err := p.DiscoverDescriptors(nil, c)
+		if err != nil {
+			fmt.Printf("Failed to discover descriptors, err: %s\n", err)
+			continue
+		}
+
+		for _, d := range ds {
+			msg := "  Descriptor      " + d.UUID().String()
+			if len(d.Name()) > 0 {
+				msg += " (" + d.Name() + ")"
+			}
+			fmt.Println(msg)
+
+			// Read descriptor (could fail, if it's not readable)
+			b, err := p.ReadDescriptor(d)
+			if err != nil {
+				fmt.Printf("Failed to read descriptor, err: %s\n", err)
+				continue
+			}
+			fmt.Printf("    value         %x | %q\n", b, b)
+		}
+
+		// Subscribe the characteristic, if possible.
+		if (c.Properties() & (gatt.CharNotify | gatt.CharIndicate)) != 0 {
+			f := func(c *gatt.Characteristic, b []byte, err error) {
+				fmt.Printf("notified: % X | %q\n", b, b)
+				if c.UUID().Equal(gatt.UUID16(hps.HTTPStatusCodeID)) {
+					ns, err := hps.DecodeNotifyStatus(b)
+					if err != nil {
+						fmt.Printf("Error decoding NotifyStatus %v\n", err)
+						return
+					}
+					fmt.Printf("Status code : %d\n", ns.StatusCode)
+					fmt.Printf("Headers received : %t\n", ns.HeadersReceived)
+					fmt.Printf("Headers truncated: %t\n", ns.HeadersTruncated)
+					fmt.Printf("Body received : %t\n", ns.BodyReceived)
+					fmt.Printf("Body truncated: %t\n", ns.BodyTruncated)
+
+				}
+			}
+			if err := p.SetNotifyValue(c, f); err != nil {
+				fmt.Printf("Failed to subscribe characteristic, err: %s\n", err)
+				continue
+			}
+		}
+
 		log.Printf("%s %s", msg, name)
 	}
 

@@ -7,13 +7,13 @@ package main
  */
 
 import (
-	"encoding/binary"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/davidoram/bluetooth/hps"
 	"github.com/paypal/gatt"
@@ -171,6 +171,8 @@ func NewHPSService() *gatt.Service {
 			log.Println("protocol:", protocol)
 
 			// TODO - perform the HTTP request here
+			resp = nil
+			respBody = []byte{}
 			go sendRequest()
 
 			return gatt.StatusSuccess
@@ -178,16 +180,24 @@ func NewHPSService() *gatt.Service {
 
 	s.AddCharacteristic(gatt.UUID16(hps.HTTPStatusCodeID)).HandleNotifyFunc(
 		func(r gatt.Request, n gatt.Notifier) {
-			log.Println("notify status code")
-			var statusCode uint16 = 200
-			var dataStatus uint8 = hps.DataStatusHeadersReceived | hps.DataStatusBodyReceived
+			log.Printf("----->Waiting for response ...")
+			for !n.Done() {
+				if resp != nil {
+					log.Printf("Sending response %d", resp.StatusCode)
+					ns := hps.NotifyStatus{HeadersReceived: true,
+						HeadersTruncated: false,
+						BodyReceived:     true,
+						BodyTruncated:    false,
+						StatusCode:       resp.StatusCode}
+					_, err := n.Write(ns.Encode())
+					if err != nil {
+						log.Printf("ERROR sending response %v", err)
+					}
+					resp = nil
+				} else {
+					time.Sleep(time.Millisecond * 500)
+				}
 
-			b := make([]byte, 3)
-			binary.LittleEndian.PutUint16(b, statusCode)
-			b[2] = dataStatus
-			_, err := n.Write(b)
-			if err != nil {
-				log.Printf("HTTP Status notify err: %v", err)
 			}
 		})
 
@@ -196,6 +206,9 @@ func NewHPSService() *gatt.Service {
 
 func encodeHeaders(resp *http.Response) string {
 	log.Printf("encode headers: %v", resp)
+	if resp == nil {
+		return ""
+	}
 	headers := make([]string, 0)
 	for name, values := range resp.Header {
 		// Loop over all values for the name.
