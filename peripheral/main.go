@@ -83,7 +83,7 @@ func sendRequest() error {
 	}
 
 	// Read Response Body
-	respBody, err := ioutil.ReadAll(resp.Body)
+	respBody, err = ioutil.ReadAll(resp.Body)
 	if err != nil {
 		log.Printf("Error reading response body: %v", err)
 		return err
@@ -136,7 +136,7 @@ func NewHPSService() *gatt.Service {
 		})
 	hb.HandleReadFunc(
 		func(rsp gatt.ResponseWriter, req *gatt.ReadRequest) {
-			log.Println("read entityBody")
+			log.Printf("read entityBody: %s", string(respBody))
 			_, err := rsp.Write(respBody)
 			if err != nil {
 				log.Printf("HTTP body read err: %v", err)

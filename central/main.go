@@ -32,6 +32,8 @@ var (
 	body    *string
 	verb    *string
 
+	responseChannel = make(chan bool, 1)
+
 	done = make(chan struct{})
 )
 
@@ -196,7 +198,7 @@ func parseService(p gatt.Peripheral) {
 					fmt.Printf("Headers truncated: %t\n", ns.HeadersTruncated)
 					fmt.Printf("Body received : %t\n", ns.BodyReceived)
 					fmt.Printf("Body truncated: %t\n", ns.BodyTruncated)
-
+					responseChannel <- true
 				}
 			}
 			if err := p.SetNotifyValue(c, f); err != nil {
@@ -239,11 +241,6 @@ func callService(p gatt.Peripheral) error {
 		log.Printf("Error: Setting Body, err: %s", err)
 		return err
 	}
-	// _, err = p.ReadCharacteristic(bodyChr)
-	// if err != nil {
-	// 	log.Printf("Error: Reading Body response, err: %s", err)
-	// 	return err
-	// }
 
 	log.Println("set control")
 	code, err := verbPayload(*verb, u.Scheme)
@@ -256,16 +253,28 @@ func callService(p gatt.Peripheral) error {
 		log.Printf("Error: Setting URI, err: %s", err)
 		return err
 	}
+
 	// buf, err := p.ReadCharacteristic(controlChr)
 	// if err != nil {
 	// 	log.Printf("Error: Reading Control response, err: %s", err)
 	// 	return err
 	// }
 	// log.Printf("Response: %v", buf)
-
 	log.Printf("Waiting for 5 seconds to get some notifiations, if any.\n")
-	time.Sleep(5 * time.Second)
-
+	time.AfterFunc(5*time.Second, func() {
+		log.Printf("Timeout\n")
+		responseChannel <- false
+	})
+	gotResponse := <-responseChannel
+	if gotResponse {
+		log.Println("Read body")
+		body, err := p.ReadCharacteristic(bodyChr)
+		if err != nil {
+			log.Printf("Error: Reading Body response, err: %s", err)
+			return err
+		}
+		log.Printf("Got Body %s", string(body))
+	}
 	return nil
 }
 
