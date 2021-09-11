@@ -7,6 +7,7 @@ package main
  */
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -42,50 +43,61 @@ func onStateChanged(device gatt.Device, s gatt.State) {
 	}
 }
 
-var (
+type savedRequest struct {
 	uri      string
 	headers  string
-	body     string
+	body     []byte
 	verb     string
 	protocol string
+}
 
-	resp     *http.Response
-	respBody []byte
+type savedResponse struct {
+	NotifyStatus hps.NotifyStatus
+	Headers      []byte
+	Body         []byte
+	Notified     bool
+}
+
+var (
+	request  *savedRequest
+	response *savedResponse
 )
 
-func sendRequest() error {
+func sendRequest(r savedRequest) error {
+
+	response = nil
+
 	// Create client
 	client := &http.Client{}
 
 	// Create request
-	req, err := http.NewRequest(verb, fmt.Sprintf("%s://%s", protocol, uri), strings.NewReader(body))
+	req, err := http.NewRequest(r.verb, fmt.Sprintf("%s://%s", r.protocol, r.uri), bytes.NewReader(r.body))
 
 	// Headers
-	if headers != "" {
-		for _, h := range strings.Split(headers, "\n") {
+	if r.headers != "" {
+		for _, h := range strings.Split(r.headers, "\n") {
 			values := strings.Split(h, "=")
 			if len(values) != 2 {
 				log.Printf("Ignoring invalid header %v", h)
 				continue
 			}
-			log.Printf("Header %s=%s", values[0], values[1])
 			req.Header.Add(values[0], values[1])
 		}
 	}
 
 	// Fetch Request
-	log.Printf("Fetching request %v ...", req)
-	resp, err = client.Do(req)
+	log.Printf("DBEUG : Proxying request %v ", req)
+	resp, err := client.Do(req)
 
 	if err != nil {
-		log.Println("HTTP call failed: ", err)
+		log.Println("ERROR : HTTP call failed: ", err)
 		return err
 	}
 
 	// Read Response Body
-	respBody, err = ioutil.ReadAll(resp.Body)
+	respBody, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("Error reading response body: %v", err)
+		log.Printf("ERROR : Reading response body: %v", err)
 		return err
 	}
 
@@ -94,129 +106,118 @@ func sendRequest() error {
 	log.Println("response Headers : ", resp.Header)
 	log.Println("response Body    : ", string(respBody))
 
+	b, trunc := hps.EncodeHeaders(resp.Header)
+	response = &savedResponse{
+		NotifyStatus: hps.NotifyStatus{
+			StatusCode:       resp.StatusCode,
+			HeadersReceived:  true,
+			HeadersTruncated: trunc,
+			BodyReceived:     len(respBody) > 0,
+			BodyTruncated:    len(respBody) > hps.BodyMaxOctets,
+		},
+		Headers: b,
+		Body:    respBody,
+	}
 	return nil
 }
 
 func NewHPSService() *gatt.Service {
 	s := gatt.NewService(gatt.MustParseUUID(hps.HpsServiceID))
 
-	// Receive URI
+	// URI
 	s.AddCharacteristic(gatt.UUID16(hps.HTTPURIID)).HandleWriteFunc(
 		func(r gatt.Request, data []byte) (status byte) {
-			uri = string(data)
-			log.Println("write URI:", uri)
+			request.uri = string(data)
+			log.Printf("DEBUG : %s :write URI: %s", gatt.UUID16(hps.HTTPURIID), request.uri)
 			return gatt.StatusSuccess
 		})
 
-	// Receive Headers
+	// Headers
 	hc := s.AddCharacteristic(gatt.UUID16(hps.HTTPHeadersID))
 	hc.HandleWriteFunc(
 		func(r gatt.Request, data []byte) (status byte) {
-			headers = string(data)
-			log.Println("write headers:", headers)
+			request.headers = string(data)
+			log.Printf("DEBUG : %s : Write headers : %v", gatt.UUID16(hps.HTTPHeadersID), request.headers)
 			return gatt.StatusSuccess
 		})
 	hc.HandleReadFunc(
 		func(rsp gatt.ResponseWriter, req *gatt.ReadRequest) {
-			log.Printf("read headers")
-
-			_, err := rsp.Write([]byte(encodeHeaders(resp)))
-			if err != nil {
-				log.Printf("HTTP Header read err: %v", err)
+			if response != nil {
+				log.Printf("DEBUG : %s : Read headers: %v", gatt.UUID16(hps.HTTPHeadersID), string(response.Headers))
+				_, err := rsp.Write(response.Headers)
+				if err != nil {
+					log.Printf("ERROR : %s : HTTP Header read err: %v", gatt.UUID16(hps.HTTPHeadersID), err)
+				}
+			} else {
+				log.Printf("WARN : %s : Read HTTP Header before response received", gatt.UUID16(hps.HTTPHeadersID))
 			}
 		})
 
-	// Receive Entity Body
+	// Body
 	hb := s.AddCharacteristic(gatt.UUID16(hps.HTTPEntityBodyID))
 	hb.HandleWriteFunc(
 		func(r gatt.Request, data []byte) (status byte) {
-			body = string(data)
-			log.Println("write entityBody:", body)
+			request.body = data
+			log.Printf("DEBUG : %s : Write body: %v", gatt.UUID16(hps.HTTPEntityBodyID), data)
 			return gatt.StatusSuccess
 		})
 	hb.HandleReadFunc(
 		func(rsp gatt.ResponseWriter, req *gatt.ReadRequest) {
-			log.Printf("read entityBody: %s", string(respBody))
-			_, err := rsp.Write(respBody)
-			if err != nil {
-				log.Printf("HTTP body read err: %v", err)
+			if response != nil {
+				log.Printf("DEBUG : %s : Read body: %v", gatt.UUID16(hps.HTTPEntityBodyID), string(response.Body))
+				_, err := rsp.Write(response.Body)
+				if err != nil {
+					log.Printf("ERROR : %s : HTTP Body read err: %v", gatt.UUID16(hps.HTTPEntityBodyID), err)
+				}
+			} else {
+				log.Printf("WARN : %s : Read HTTP Body before response received", gatt.UUID16(hps.HTTPEntityBodyID))
 			}
 		})
 
 	// Receive control point, this triggers the HTTP request to occur
 	s.AddCharacteristic(gatt.UUID16(hps.HTTPControlPointID)).HandleWriteFunc(
 		func(r gatt.Request, data []byte) (status byte) {
-			log.Println("write controlPoint")
-
-			switch data[0] {
-			case hps.HTTPGet, hps.HTTPSGet:
-				verb = "GET"
-			case hps.HTTPHead, hps.HTTPSHead:
-				verb = "HEAD"
-			case hps.HTTPPut, hps.HTTPSPut:
-				verb = "PUT"
-			case hps.HTTPPost, hps.HTTPSPost:
-				verb = "POST"
-			case hps.HTTPDelete, hps.HTTPSDelete:
-				verb = "DELETE"
+			var err error
+			request.verb, err = hps.DecodeHttpMethod(data[0])
+			if err != nil {
+				log.Printf("ERROR : %s : HTTP method : %v", gatt.UUID16(hps.HTTPControlPointID), err)
+				return gatt.StatusUnexpectedError // TODO is this correct?
 			}
-			log.Println("verb:", verb)
+			log.Printf("DEBUG : %s : HTTP method : %s", gatt.UUID16(hps.HTTPControlPointID), request.verb)
 
-			switch data[0] {
-			case hps.HTTPSGet, hps.HTTPSHead, hps.HTTPSPut, hps.HTTPSPost, hps.HTTPSDelete:
-				protocol = "https"
-			default:
-				protocol = "http"
+			request.protocol, err = hps.DecodeURLScheme(data[0])
+			if err != nil {
+				log.Printf("ERROR : %s : URL scheme : %v", gatt.UUID16(hps.HTTPControlPointID), err)
+				return gatt.StatusUnexpectedError // TODO is this correct?
 			}
-			log.Println("protocol:", protocol)
+			log.Printf("DEBUG : %s : URL scheme : %s", gatt.UUID16(hps.HTTPControlPointID), request.verb)
 
-			// TODO - perform the HTTP request here
-			resp = nil
-			respBody = []byte{}
-			go sendRequest()
+			// Make the API call in the background
+			go sendRequest(*request)
+
+			// Reset inputs, ready for the next call
+			request = &savedRequest{}
 
 			return gatt.StatusSuccess
 		})
 
 	s.AddCharacteristic(gatt.UUID16(hps.HTTPStatusCodeID)).HandleNotifyFunc(
 		func(r gatt.Request, n gatt.Notifier) {
-			log.Printf("----->Waiting for response ...")
 			for !n.Done() {
-				if resp != nil {
-					log.Printf("Sending response %d", resp.StatusCode)
-					ns := hps.NotifyStatus{HeadersReceived: true,
-						HeadersTruncated: false,
-						BodyReceived:     true,
-						BodyTruncated:    false,
-						StatusCode:       resp.StatusCode}
-					_, err := n.Write(ns.Encode())
+				if response != nil && !response.Notified {
+					log.Printf("DEBUG : %s : Sending response %d", gatt.UUID16(hps.HTTPStatusCodeID), response.NotifyStatus.StatusCode)
+					_, err := n.Write(response.NotifyStatus.Encode())
 					if err != nil {
-						log.Printf("ERROR sending response %v", err)
+						log.Printf("ERROR : %s : sending response %v", gatt.UUID16(hps.HTTPStatusCodeID), err)
 					}
-					resp = nil
+					response.Notified = true
 				} else {
-					time.Sleep(time.Millisecond * 500)
+					time.Sleep(time.Millisecond * 100)
 				}
-
 			}
 		})
 
 	return s
-}
-
-func encodeHeaders(resp *http.Response) string {
-	log.Printf("encode headers: %v", resp)
-	if resp == nil {
-		return ""
-	}
-	headers := make([]string, 0)
-	for name, values := range resp.Header {
-		// Loop over all values for the name.
-		for _, value := range values {
-			headers = append(headers, fmt.Sprintf("%s=%s", name, value))
-		}
-	}
-	return strings.Join(headers, "\n")
 }
 
 func main() {
@@ -226,6 +227,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to open device, err: %s", err)
 	}
+
+	// Init space for the next request
+	request = &savedRequest{}
 
 	// Register optional handlers.
 	d.Handle(

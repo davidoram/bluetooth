@@ -274,6 +274,15 @@ func callService(p gatt.Peripheral) error {
 			return err
 		}
 		log.Printf("Got Body %s", string(body))
+
+		hdrBytes, err := p.ReadCharacteristic(hdrsChr)
+		if err != nil {
+			log.Printf("Error: Reading Headers response, err: %s", err)
+			return err
+		}
+		headers := hps.DecodeHeaders(hdrBytes)
+		log.Printf("Got Headers %v", headers)
+
 	}
 	return nil
 }
@@ -334,64 +343,6 @@ func verbPayload(verb, scheme string) (uint8, error) {
 		return 0, UnsupportedHttpVerbError
 	}
 }
-
-// 			if len(c.Name()) > 0 {
-// 				msg += " (" + c.Name() + ")"
-// 			}
-// 			msg += "\n    properties    " + c.Properties().String()
-// 			log.Println(msg)
-
-// 			// Read the characteristic, if possible.
-// 			if (c.Properties() & gatt.CharRead) != 0 {
-// 				b, err := p.ReadCharacteristic(c)
-// 				if err != nil {
-// 					log.Printf("Failed to read characteristic, err: %s\n", err)
-// 					continue
-// 				}
-// 				log.Printf("    value         %x | %q\n", b, b)
-// 			}
-
-// 			// Discovery descriptors
-// 			ds, err := p.DiscoverDescriptors(nil, c)
-// 			if err != nil {
-// 				log.Printf("Failed to discover descriptors, err: %s\n", err)
-// 				continue
-// 			}
-
-// 			for _, d := range ds {
-// 				msg := "  Descriptor      " + d.UUID().String()
-// 				if len(d.Name()) > 0 {
-// 					msg += " (" + d.Name() + ")"
-// 				}
-// 				log.Println(msg)
-
-// 				// Read descriptor (could fail, if it's not readable)
-// 				b, err := p.ReadDescriptor(d)
-// 				if err != nil {
-// 					log.Printf("Failed to read descriptor, err: %s\n", err)
-// 					continue
-// 				}
-// 				log.Printf("    value         %x | %q\n", b, b)
-// 			}
-
-// 			// Subscribe the characteristic, if possible.
-// 			if (c.Properties() & (gatt.CharNotify | gatt.CharIndicate)) != 0 {
-// 				f := func(c *gatt.Characteristic, b []byte, err error) {
-// 					log.Printf("notified: % X | %q\n", b, b)
-// 				}
-// 				if err := p.SetNotifyValue(c, f); err != nil {
-// 					log.Printf("Failed to subscribe characteristic, err: %s\n", err)
-// 					continue
-// 				}
-// 			}
-
-// 		}
-// 		log.Println()
-// 	}
-
-// 	log.Printf("Waiting for 5 seconds to get some notifiations, if any.\n")
-// 	time.Sleep(5 * time.Second)
-// }
 
 func onPeriphDisconnected(p gatt.Peripheral, err error) {
 	log.Println("Disconnected")
