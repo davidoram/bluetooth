@@ -101,11 +101,6 @@ func sendRequest(r savedRequest) error {
 		return err
 	}
 
-	// Display Results
-	log.Println("response Status  : ", resp.Status)
-	log.Println("response Headers : ", resp.Header)
-	log.Println("response Body    : ", string(respBody))
-
 	b, trunc := hps.EncodeHeaders(resp.Header)
 	response = &savedResponse{
 		NotifyStatus: hps.NotifyStatus{
