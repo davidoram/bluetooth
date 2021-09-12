@@ -27,6 +27,20 @@ const (
 	HTTPSDelete       uint8 = 0x0a
 	HTTPRequestCancel uint8 = 0x0b
 
+	// Encode these values together in one octet
+	HeadersReceived  uint8 = 0x01
+	HeadersTruncated uint8 = 0x02
+	BodyReceived     uint8 = 0x04
+	BodyTruncated    uint8 = 0x08
+
+	// HeaderMaxOctets is max buffer size that the HTTP Headers encode into,
+	// otherwise the server will report HeadersTruncated
+	HeaderMaxOctets int = 512
+
+	// BodyMaxOctets is max buffer size of the HTTP Body,
+	// otherwise the server will report BodyTruncated
+	BodyMaxOctets int = 512
+
 	DataStatusHeadersReceived  uint8 = 0x01
 	DataStatusHeadersTruncated uint8 = 0x02
 	DataStatusBodyReceived     uint8 = 0x04
