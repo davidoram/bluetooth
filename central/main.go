@@ -7,20 +7,37 @@ package main
  */
 
 import (
-	"errors"
 	"flag"
 	"fmt"
-	"log"
+	"io/ioutil"
+	golog "log"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/davidoram/bluetooth/hps"
 	"github.com/paypal/gatt"
 	"github.com/paypal/gatt/examples/option"
+
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 )
 
+// Define a new type that can accept multiple values passed on the command line
 type arrayStr []string
+
+func (i *arrayStr) String() string {
+	return strings.Join([]string(*i), "\n")
+}
+
+func (i *arrayStr) Set(value string) error {
+	if len(strings.Split(value, "=")) != 2 {
+		return fmt.Errorf("Invalid format, expect 'key=value'")
+	}
+	*i = append(*i, value)
+	return nil
+}
 
 var (
 	// id          *string
@@ -30,60 +47,78 @@ var (
 	u       *url.URL
 	headers arrayStr
 	body    *string
-	verb    *string
+	method  *string
+
+	level      *string
+	consoleLog *bool
+
+	responseTimeout *time.Duration
+
+	responseChannel = make(chan bool, 1)
+	response        *hps.Response
 
 	done = make(chan struct{})
 )
 
-func (i *arrayStr) String() string {
-	return strings.Join([]string(*i), "\n")
-}
-
-func (i *arrayStr) Set(value string) error {
-	if len(strings.Split(value, "=")) != 2 {
-		return fmt.Errorf("Invalid header format, expect 'key=value'")
-	}
-	*i = append(*i, value)
-	return nil
-}
-
 func init() {
+	golog.SetOutput(ioutil.Discard)
+	// UNIX Time is faster and smaller than most timestamps
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+
 	// id = flag.String("id", hps.PeripheralID, "Peripheral ID to scan for")
 	deviceName = flag.String("name", hps.DeviceName, "Device name to scan for")
 	uri = flag.String("uri", "http://localhost:8100/hello.txt", "uri")
 	flag.Var(&headers, "header", `HTTP headers. eg: -header "Accept=text/plain" -header "X-API-KEY=xyzabc"`)
 	body = flag.String("body", "", "HTTP body to POST/PUT")
-	verb = flag.String("verb", "GET", "HTTP verb, eg: GET, PUT, POST, PATCH, DELETE")
+	method = flag.String("verb", "GET", "HTTP verb, eg: GET, PUT, POST, PATCH, DELETE")
+	responseTimeout = flag.Duration("timeout", time.Second*30, "Time to wait for server to return response")
+	level = flag.String("level", "info", "Logging level, eg: panic, fatal, error, warn, info, debug, trace")
+	consoleLog = flag.Bool("console-log", true, "Pass true to enable colorized console logging, false for JSON style logging")
+
 }
 
 func onStateChanged(d gatt.Device, s gatt.State) {
-	fmt.Println("State:", s)
+	log.Info().Str("state", s.String()).Msg("state changed")
 	switch s {
 	case gatt.StatePoweredOn:
-		fmt.Println("Scanning...")
-		d.Scan([]gatt.UUID{}, false)
-		return
+		go scanPeriodically(d)
 	default:
+		log.Info().Msg("stop scanning")
 		d.StopScanning()
 	}
 }
+
+var (
+	foundServer bool
+)
+
+func scanPeriodically(d gatt.Device) {
+	log.Info().Msg("start periodic scan")
+	for !foundServer {
+		d.Scan([]gatt.UUID{}, false)
+		time.Sleep(time.Millisecond * 100)
+	}
+	log.Info().Msg("stop periodic scan")
+}
+
 func onPeriphDiscovered(p gatt.Peripheral, a *gatt.Advertisement, rssi int) {
 	if p.Name() != *deviceName {
-		log.Printf("Skipping Peripheral ID:%s, NAME:%s", p.ID(), p.Name())
+		log.Debug().Str("peripheral_id", p.ID()).Str("name", p.Name()).Msg("Skipping")
 		return
 	}
+	foundServer = true
 
 	// Stop scanning once we've got the peripheral we're looking for.
+	log.Info().Str("peripheral_id", p.ID()).Str("name", p.Name()).Msg("Found peripheral")
+	log.Info().Msg("stop scanning")
 	p.Device().StopScanning()
 
-	log.Printf("Found server")
-	log.Printf("\nPeripheral ID:%s, NAME:(%s)\n", p.ID(), p.Name())
-	log.Println("  Local Name        =", a.LocalName)
-	log.Println("  TX Power Level    =", a.TxPowerLevel)
-	log.Println("  Manufacturer Data =", a.ManufacturerData)
-	log.Println("  Service Data      =", a.ServiceData)
-	log.Println("")
+	log.Debug().Str("local_name", a.LocalName).
+		Int("tx_power_level", a.TxPowerLevel).
+		Bytes("manufacturer_data", a.ManufacturerData).
+		Interface("service_data", a.ServiceData).Msg("scan")
 
+	log.Info().Msg("connect")
 	p.Device().Connect(p)
 }
 
@@ -92,27 +127,30 @@ var (
 )
 
 func onPeriphConnected(p gatt.Peripheral, err error) {
-	log.Println("Connected")
-	defer p.Device().CancelConnection(p)
+	log.Info().Msg("connected")
 
 	if err := p.SetMTU(500); err != nil {
-		log.Printf("Failed to set MTU, err: %s\n", err)
+		log.Err(err).Msg("MTU set")
 	}
 
 	// Discovery services
 	ss, err := p.DiscoverServices(nil)
 	if err != nil {
-		log.Printf("Failed to discover services, err: %s\n", err)
+		log.Err(err).Msg("Discover services")
 		return
 	}
 
 	for _, s := range ss {
 		if s.UUID().Equal(gatt.MustParseUUID(hps.HpsServiceID)) {
 			hpsService = s
-			parseService(p)
-			err := callService(p)
+			err := parseService(p)
 			if err != nil {
-				log.Printf("Error calling service: %s", err)
+				log.Err(err).Msg("Discover services")
+				continue
+			}
+			err = callService(p)
+			if err != nil {
+				log.Err(err).Msg("call service")
 			}
 			break
 		}
@@ -123,232 +161,178 @@ var (
 	uriChr, hdrsChr, bodyChr, controlChr, statusChr *gatt.Characteristic
 )
 
-func parseService(p gatt.Peripheral) {
-	log.Println("parse service")
+func parseService(p gatt.Peripheral) error {
+	log.Debug().Msg("parse service")
 
 	// Discovery characteristics
 	cs, err := p.DiscoverCharacteristics(nil, hpsService)
 	if err != nil {
-		log.Printf("Error: Failed to discover characteristics, err: %s\n", err)
+		return err
 	}
-
 	for _, c := range cs {
-		msg := "Characteristic  " + c.UUID().String()
-		name := "Unknown"
+		log.Debug().Str("name", c.Name()).Msg("characteristic")
 		switch c.UUID().String() {
 		case gatt.UUID16(hps.HTTPURIID).String():
-			name = "URI"
 			uriChr = c
 		case gatt.UUID16(hps.HTTPHeadersID).String():
-			name = "Headers"
 			hdrsChr = c
 		case gatt.UUID16(hps.HTTPEntityBodyID).String():
-			name = "Body"
 			bodyChr = c
 		case gatt.UUID16(hps.HTTPControlPointID).String():
-			name = "Control Point"
 			controlChr = c
 		case gatt.UUID16(hps.HTTPStatusCodeID).String():
-			name = "Status code"
 			statusChr = c
 		}
-		log.Printf("%s %s", msg, name)
-	}
 
+		// // Read the characteristic, if possible.
+		// if (c.Properties() & gatt.CharRead) != 0 {
+		// 	log.Debug(err).Str("name", c.Name()).Msg("failed to read")
+		// 	b, err := p.ReadCharacteristic(c)
+		// 	if err != nil {
+		// 		log.Err(err).Str("name", c.Name()).Msg("failed to read")
+		// 		continue
+		// 	}
+		// 	log.Err(err).Bytes("value",b).Msg("read")
+		// }
+
+		// Discovery descriptors
+		ds, err := p.DiscoverDescriptors(nil, c)
+		if err != nil {
+			log.Err(err).Msg("discover descriptors")
+			continue
+		}
+
+		for _, d := range ds {
+			// Read descriptor (could fail, if it's not readable)
+			b, err := p.ReadDescriptor(d)
+			if err != nil {
+				log.Err(err).Str("name", d.Name()).Msg("read descriptor")
+				continue
+			}
+			log.Debug().Str("name", d.Name()).Bytes("value", b).Msg("readdescriptor")
+		}
+
+		// Subscribe the characteristic, if possible.
+		if (c.Properties() & (gatt.CharNotify | gatt.CharIndicate)) != 0 {
+			f := func(c *gatt.Characteristic, b []byte, err error) {
+				log.Info().Str("name", c.Name()).Bytes("value", b).Msg("notified")
+				if c.UUID().Equal(gatt.UUID16(hps.HTTPStatusCodeID)) {
+					ns, err := hps.DecodeNotifyStatus(b)
+					if err != nil {
+						log.Err(err).Msg("decode notify status")
+						return
+					}
+					log.Info().Int("http_status", ns.StatusCode).
+						Bool("headers_received", ns.HeadersReceived).
+						Bool("headers_truncated", ns.HeadersTruncated).
+						Bool("body_received", ns.BodyReceived).
+						Bool("body_truncated", ns.BodyTruncated).
+						Msg("decoded notify status")
+					response = &hps.Response{NotifyStatus: ns}
+					responseChannel <- true
+				}
+			}
+			if err := p.SetNotifyValue(c, f); err != nil {
+				log.Err(err).Msg("subscribe to notifications")
+				continue
+			}
+		}
+
+	}
+	return nil
 }
 
 func callService(p gatt.Peripheral) error {
-	log.Println("call service")
+	defer p.Device().CancelConnection(p)
 
-	log.Println("set URI")
+	log.Info().Str("uri", u.String()).
+		Interface("headers", headers).
+		Str("body", *body).
+		Str("method", *method).
+		Str("schema", u.Scheme).
+		Msg("call service")
+
 	urlStr := fmt.Sprintf("%s%s", u.Host, u.EscapedPath())
 	err := p.WriteCharacteristic(uriChr, []byte(urlStr), true)
 	if err != nil {
-		log.Printf("Error: Setting URI, err: %s", err)
 		return err
 	}
-	// _, err = p.ReadCharacteristic(uriChr)
-	// if err != nil {
-	// 	log.Printf("Error: Reading URI response, err: %s", err)
-	// 	return err
-	// }
 
-	log.Println("set Headers")
 	err = p.WriteCharacteristic(hdrsChr, []byte(headers.String()), true)
 	if err != nil {
-		log.Printf("Error: Setting Headers, err: %s", err)
 		return err
 	}
 
-	log.Println("set Body")
 	err = p.WriteCharacteristic(bodyChr, []byte(*body), true)
 	if err != nil {
-		log.Printf("Error: Setting Body, err: %s", err)
 		return err
 	}
-	// _, err = p.ReadCharacteristic(bodyChr)
-	// if err != nil {
-	// 	log.Printf("Error: Reading Body response, err: %s", err)
-	// 	return err
-	// }
 
-	log.Println("set control")
-	code, err := verbPayload(*verb, u.Scheme)
+	code, err := hps.EncodeMethodScheme(*method, u.Scheme)
 	if err != nil {
-		log.Printf("Error: Parsing verb: %s, scheme: %s, err: %s", *verb, u.Scheme, err)
 		return err
 	}
 	err = p.WriteCharacteristic(controlChr, []byte{code}, false)
 	if err != nil {
-		log.Printf("Error: Setting URI, err: %s", err)
 		return err
 	}
-	// buf, err := p.ReadCharacteristic(controlChr)
-	// if err != nil {
-	// 	log.Printf("Error: Reading Control response, err: %s", err)
-	// 	return err
-	// }
-	// log.Printf("Response: %v", buf)
 
-	log.Printf("Waiting for 5 seconds to get some notifiations, if any.\n")
-	time.Sleep(5 * time.Second)
+	log.Info().Dur("timeout", *responseTimeout).Msg("waiting for notification")
+	time.AfterFunc(*responseTimeout, func() {
+		log.Warn().Msg("timeout expired, no notification received")
+		responseChannel <- false
+	})
+	gotResponse := <-responseChannel
+	if gotResponse {
+		response.Body, err = p.ReadCharacteristic(bodyChr)
+		if err != nil {
+			return err
+		}
+
+		response.Headers, err = p.ReadCharacteristic(hdrsChr)
+		if err != nil {
+			return err
+		}
+		log.Info().Str("body", string(response.Body)).
+			Interface("headers", response.DecodedHeaders()).
+			Bool("headers_received", response.NotifyStatus.HeadersReceived).
+			Bool("headers_truncated", response.NotifyStatus.HeadersTruncated).
+			Bool("body_received", response.NotifyStatus.BodyReceived).
+			Bool("body_truncated", response.NotifyStatus.BodyTruncated).
+			Msg("read resoponse")
+	}
 
 	return nil
 }
 
-var (
-	UnsupportedSchemeError   = errors.New("Unsupported scheme, valid values are http and https")
-	UnsupportedHttpVerbError = errors.New("Unsupported verb, valid values are get, head, post, put, delete")
-)
-
-func verbPayload(verb, scheme string) (uint8, error) {
-	switch strings.ToLower(strings.Trim(verb, " ")) {
-	case "get":
-		switch scheme {
-		case "http":
-			return hps.HTTPGet, nil
-		case "https":
-			return hps.HTTPSGet, nil
-		default:
-			return 0, UnsupportedSchemeError
-		}
-	case "head":
-		switch scheme {
-		case "http":
-			return hps.HTTPHead, nil
-		case "https":
-			return hps.HTTPSHead, nil
-		default:
-			return 0, UnsupportedSchemeError
-		}
-	case "post":
-		switch scheme {
-		case "http":
-			return hps.HTTPPost, nil
-		case "https":
-			return hps.HTTPSPost, nil
-		default:
-			return 0, UnsupportedSchemeError
-		}
-	case "put":
-		switch scheme {
-		case "http":
-			return hps.HTTPPut, nil
-		case "https":
-			return hps.HTTPSPut, nil
-		default:
-			return 0, UnsupportedSchemeError
-		}
-	case "delete":
-		switch scheme {
-		case "http":
-			return hps.HTTPDelete, nil
-		case "https":
-			return hps.HTTPSDelete, nil
-		default:
-			return 0, UnsupportedSchemeError
-		}
-	default:
-		return 0, UnsupportedHttpVerbError
-	}
-}
-
-// 			if len(c.Name()) > 0 {
-// 				msg += " (" + c.Name() + ")"
-// 			}
-// 			msg += "\n    properties    " + c.Properties().String()
-// 			log.Println(msg)
-
-// 			// Read the characteristic, if possible.
-// 			if (c.Properties() & gatt.CharRead) != 0 {
-// 				b, err := p.ReadCharacteristic(c)
-// 				if err != nil {
-// 					log.Printf("Failed to read characteristic, err: %s\n", err)
-// 					continue
-// 				}
-// 				log.Printf("    value         %x | %q\n", b, b)
-// 			}
-
-// 			// Discovery descriptors
-// 			ds, err := p.DiscoverDescriptors(nil, c)
-// 			if err != nil {
-// 				log.Printf("Failed to discover descriptors, err: %s\n", err)
-// 				continue
-// 			}
-
-// 			for _, d := range ds {
-// 				msg := "  Descriptor      " + d.UUID().String()
-// 				if len(d.Name()) > 0 {
-// 					msg += " (" + d.Name() + ")"
-// 				}
-// 				log.Println(msg)
-
-// 				// Read descriptor (could fail, if it's not readable)
-// 				b, err := p.ReadDescriptor(d)
-// 				if err != nil {
-// 					log.Printf("Failed to read descriptor, err: %s\n", err)
-// 					continue
-// 				}
-// 				log.Printf("    value         %x | %q\n", b, b)
-// 			}
-
-// 			// Subscribe the characteristic, if possible.
-// 			if (c.Properties() & (gatt.CharNotify | gatt.CharIndicate)) != 0 {
-// 				f := func(c *gatt.Characteristic, b []byte, err error) {
-// 					log.Printf("notified: % X | %q\n", b, b)
-// 				}
-// 				if err := p.SetNotifyValue(c, f); err != nil {
-// 					log.Printf("Failed to subscribe characteristic, err: %s\n", err)
-// 					continue
-// 				}
-// 			}
-
-// 		}
-// 		log.Println()
-// 	}
-
-// 	log.Printf("Waiting for 5 seconds to get some notifiations, if any.\n")
-// 	time.Sleep(5 * time.Second)
-// }
-
 func onPeriphDisconnected(p gatt.Peripheral, err error) {
-	log.Println("Disconnected")
+	log.Info().Msg("disconnected")
 	close(done)
 }
 
 func main() {
 	flag.Parse()
-	var err error
+	if *consoleLog {
+		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+	}
+	lvl, err := zerolog.ParseLevel(*level)
+	if err != nil {
+		lvl = zerolog.DebugLevel
+	}
+	zerolog.SetGlobalLevel(lvl)
+	if err != nil {
+		log.Panic().Str("level", *level).Msg("Invalid log level")
+	}
 	u, err = url.Parse(*uri)
 	if err != nil {
-		log.Fatalf("URL parse error: %v", err)
+		log.Err(err).Msg("Parse error")
 		return
 	}
-	log.Printf("Device Name: %s", *deviceName)
+	log.Info().Str("device_name", *deviceName).Msg("starting up")
 
 	d, err := gatt.NewDevice(option.DefaultClientOptions...)
 	if err != nil {
-		log.Fatalf("Failed to open device, err: %s\n", err)
+		log.Err(err).Msg("Device failed")
 		return
 	}
 
@@ -361,5 +345,5 @@ func main() {
 
 	d.Init(onStateChanged)
 	<-done
-	log.Println("Done")
+	log.Info().Msg("Done")
 }
