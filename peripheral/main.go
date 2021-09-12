@@ -26,8 +26,9 @@ import (
 )
 
 var (
-	// id *string
 	deviceName *string
+	level      *string
+	consoleLog *bool
 )
 
 func init() {
@@ -38,7 +39,8 @@ func init() {
 
 	// id = flag.String("id", hps.PeripheralID, "Peripheral ID")
 	deviceName = flag.String("name", hps.DeviceName, "Device name to advertise")
-
+	level = flag.String("level", "info", "Logging level, eg: panic, fatal, error, warn, info, debug, trace")
+	consoleLog = flag.Bool("console-log", true, "Pass true to enable colorized console logging, false for JSON style logging")
 }
 
 func onStateChanged(device gatt.Device, s gatt.State) {
@@ -230,7 +232,21 @@ var (
 func main() {
 
 	flag.Parse()
+
+	if *consoleLog {
+		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+	}
+	lvl, err := zerolog.ParseLevel(*level)
+	if err != nil {
+		lvl = zerolog.DebugLevel
+	}
+	zerolog.SetGlobalLevel(lvl)
+	if err != nil {
+		log.Panic().Str("level", *level).Msg("Invalid log level")
+	}
+
 	log.Info().Str("device_name", *deviceName).Msg("creating")
+
 	d, err := gatt.NewDevice(option.DefaultServerOptions...)
 	if err != nil {
 		log.Err(err)
