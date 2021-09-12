@@ -44,23 +44,16 @@ func onStateChanged(device gatt.Device, s gatt.State) {
 }
 
 type savedRequest struct {
-	uri      string
-	headers  string
-	body     []byte
-	verb     string
-	protocol string
-}
-
-type savedResponse struct {
-	NotifyStatus hps.NotifyStatus
-	Headers      []byte
-	Body         []byte
-	Notified     bool
+	URI     string
+	Headers string
+	Body    []byte
+	Method  string
+	Scheme  string
 }
 
 var (
 	request  *savedRequest
-	response *savedResponse
+	response *hps.Response
 )
 
 func sendRequest(r savedRequest) error {
@@ -71,11 +64,11 @@ func sendRequest(r savedRequest) error {
 	client := &http.Client{}
 
 	// Create request
-	req, err := http.NewRequest(r.verb, fmt.Sprintf("%s://%s", r.protocol, r.uri), bytes.NewReader(r.body))
+	req, err := http.NewRequest(r.Method, fmt.Sprintf("%s://%s", r.Scheme, r.URI), bytes.NewReader(r.Body))
 
 	// Headers
-	if r.headers != "" {
-		for _, h := range strings.Split(r.headers, "\n") {
+	if r.Headers != "" {
+		for _, h := range strings.Split(r.Headers, "\n") {
 			values := strings.Split(h, "=")
 			if len(values) != 2 {
 				log.Printf("Ignoring invalid header %v", h)
@@ -102,7 +95,7 @@ func sendRequest(r savedRequest) error {
 	}
 
 	b, trunc := hps.EncodeHeaders(resp.Header)
-	response = &savedResponse{
+	response = &hps.Response{
 		NotifyStatus: hps.NotifyStatus{
 			StatusCode:       resp.StatusCode,
 			HeadersReceived:  true,
@@ -122,8 +115,8 @@ func NewHPSService() *gatt.Service {
 	// URI
 	s.AddCharacteristic(gatt.UUID16(hps.HTTPURIID)).HandleWriteFunc(
 		func(r gatt.Request, data []byte) (status byte) {
-			request.uri = string(data)
-			log.Printf("DEBUG : %s :write URI: %s", gatt.UUID16(hps.HTTPURIID), request.uri)
+			request.URI = string(data)
+			log.Printf("DEBUG : %s : write URI: %s", gatt.UUID16(hps.HTTPURIID), request.URI)
 			return gatt.StatusSuccess
 		})
 
@@ -131,14 +124,14 @@ func NewHPSService() *gatt.Service {
 	hc := s.AddCharacteristic(gatt.UUID16(hps.HTTPHeadersID))
 	hc.HandleWriteFunc(
 		func(r gatt.Request, data []byte) (status byte) {
-			request.headers = string(data)
-			log.Printf("DEBUG : %s : Write headers : %v", gatt.UUID16(hps.HTTPHeadersID), request.headers)
+			request.Headers = string(data)
+			log.Printf("DEBUG : %s : Write headers : %v", gatt.UUID16(hps.HTTPHeadersID), request.Headers)
 			return gatt.StatusSuccess
 		})
 	hc.HandleReadFunc(
 		func(rsp gatt.ResponseWriter, req *gatt.ReadRequest) {
 			if response != nil {
-				log.Printf("DEBUG : %s : Read headers: %v", gatt.UUID16(hps.HTTPHeadersID), string(response.Headers))
+				log.Printf("DEBUG : %s : Read headers: %v", gatt.UUID16(hps.HTTPHeadersID), response.DecodedHeaders())
 				_, err := rsp.Write(response.Headers)
 				if err != nil {
 					log.Printf("ERROR : %s : HTTP Header read err: %v", gatt.UUID16(hps.HTTPHeadersID), err)
@@ -152,7 +145,7 @@ func NewHPSService() *gatt.Service {
 	hb := s.AddCharacteristic(gatt.UUID16(hps.HTTPEntityBodyID))
 	hb.HandleWriteFunc(
 		func(r gatt.Request, data []byte) (status byte) {
-			request.body = data
+			request.Body = data
 			log.Printf("DEBUG : %s : Write body: %v", gatt.UUID16(hps.HTTPEntityBodyID), data)
 			return gatt.StatusSuccess
 		})
@@ -173,19 +166,19 @@ func NewHPSService() *gatt.Service {
 	s.AddCharacteristic(gatt.UUID16(hps.HTTPControlPointID)).HandleWriteFunc(
 		func(r gatt.Request, data []byte) (status byte) {
 			var err error
-			request.verb, err = hps.DecodeHttpMethod(data[0])
+			request.Method, err = hps.DecodeHttpMethod(data[0])
 			if err != nil {
 				log.Printf("ERROR : %s : HTTP method : %v", gatt.UUID16(hps.HTTPControlPointID), err)
 				return gatt.StatusUnexpectedError // TODO is this correct?
 			}
-			log.Printf("DEBUG : %s : HTTP method : %s", gatt.UUID16(hps.HTTPControlPointID), request.verb)
+			log.Printf("DEBUG : %s : HTTP method : %s", gatt.UUID16(hps.HTTPControlPointID), request.Method)
 
-			request.protocol, err = hps.DecodeURLScheme(data[0])
+			request.Scheme, err = hps.DecodeURLScheme(data[0])
 			if err != nil {
 				log.Printf("ERROR : %s : URL scheme : %v", gatt.UUID16(hps.HTTPControlPointID), err)
 				return gatt.StatusUnexpectedError // TODO is this correct?
 			}
-			log.Printf("DEBUG : %s : URL scheme : %s", gatt.UUID16(hps.HTTPControlPointID), request.verb)
+			log.Printf("DEBUG : %s : URL scheme : %s", gatt.UUID16(hps.HTTPControlPointID), request.Scheme)
 
 			// Make the API call in the background
 			go sendRequest(*request)
@@ -215,12 +208,17 @@ func NewHPSService() *gatt.Service {
 	return s
 }
 
+var (
+	poweredOn bool
+)
+
 func main() {
+
 	flag.Parse()
-	log.Printf("Device name: %s", *deviceName)
+	log.Printf("INFO : Device name: %s", *deviceName)
 	d, err := gatt.NewDevice(option.DefaultServerOptions...)
 	if err != nil {
-		log.Fatalf("Failed to open device, err: %s", err)
+		log.Fatalf("FATAL : Failed to open device, err: %s", err)
 	}
 
 	// Init space for the next request
@@ -228,26 +226,36 @@ func main() {
 
 	// Register optional handlers.
 	d.Handle(
-		gatt.CentralConnected(func(c gatt.Central) { log.Println("Connect: ", c.ID()) }),
-		gatt.CentralDisconnected(func(c gatt.Central) { log.Println("Disconnect: ", c.ID()) }),
+		gatt.CentralConnected(func(c gatt.Central) { log.Println("INFO : Connect: ", c.ID()) }),
+		gatt.CentralDisconnected(func(c gatt.Central) { log.Println("INFO : Disconnect: ", c.ID()) }),
 	)
 
 	// A mandatory handler for monitoring device state.
 	onStateChanged := func(d gatt.Device, s gatt.State) {
-		fmt.Printf("State: %s\n", s)
+		log.Printf("INFO : State: %s\n", s)
 		switch s {
 		case gatt.StatePoweredOn:
+			poweredOn = true
 			s1 := NewHPSService()
 			d.AddService(s1)
-			log.Printf("Server UUID: %s", s1.UUID())
-
-			// Advertise device name and service's UUIDs.
-			d.AdvertiseNameAndServices(hps.DeviceName, []gatt.UUID{s1.UUID()})
+			log.Printf("INFO : Server UUID: %s", s1.UUID())
+			go advertisePeriodically(d, hps.DeviceName, []gatt.UUID{s1.UUID()})
 
 		default:
+			poweredOn = false
 		}
 	}
 
 	d.Init(onStateChanged)
 	select {}
+}
+
+func advertisePeriodically(d gatt.Device, deviceName string, services []gatt.UUID) {
+	log.Println("INFO : Start advertising")
+	for poweredOn {
+		// Advertise device name and service's UUIDs.
+		d.AdvertiseNameAndServices(hps.DeviceName, services)
+		time.Sleep(time.Millisecond * 100)
+	}
+	log.Println("INFO : Stop advertising")
 }

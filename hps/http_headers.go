@@ -2,7 +2,6 @@ package hps
 
 import (
 	"bytes"
-	"log"
 	"net/http"
 	"strings"
 )
@@ -12,7 +11,6 @@ import (
 // Returns the buffer, along with a flag set true if the headers were truncated to fit the
 // buffer. Truncation occurs at the end of each Header
 func EncodeHeaders(headers http.Header) ([]byte, bool) {
-	log.Printf("encode headers: %v", headers)
 	truncated := false
 	var b bytes.Buffer
 	idx := 0

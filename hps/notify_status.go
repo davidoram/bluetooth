@@ -3,7 +3,7 @@ package hps
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
+	"log"
 )
 
 type NotifyStatus struct {
@@ -49,7 +49,7 @@ func DecodeNotifyStatus(buf []byte) (NotifyStatus, error) {
 	}
 
 	if err := binary.Read(r, binary.LittleEndian, &data); err != nil {
-		fmt.Println("binary.Read failed:", err)
+		log.Println("binary.Read failed:", err)
 		return ns, err
 	}
 	ns.HeadersReceived = data.DataStatus&HeadersReceived == HeadersReceived

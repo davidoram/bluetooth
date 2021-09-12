@@ -47,6 +47,7 @@ var (
 	responseTimeout *time.Duration
 
 	responseChannel = make(chan bool, 1)
+	response        *hps.Response
 
 	done = make(chan struct{})
 )
@@ -65,19 +66,32 @@ func onStateChanged(d gatt.Device, s gatt.State) {
 	log.Printf("DEBUG : State: %v", s)
 	switch s {
 	case gatt.StatePoweredOn:
-		log.Printf("DEBUG : Start scanning...")
-		d.Scan([]gatt.UUID{}, false)
-		return
+		go scanPeriodically(d)
 	default:
 		log.Printf("DEBUG : Stop scanning")
 		d.StopScanning()
 	}
 }
+
+var (
+	foundServer bool
+)
+
+func scanPeriodically(d gatt.Device) {
+	log.Println("INFO : Start scanning")
+	for !foundServer {
+		d.Scan([]gatt.UUID{}, false)
+		time.Sleep(time.Millisecond * 100)
+	}
+	log.Println("INFO : Stop scanning")
+}
+
 func onPeriphDiscovered(p gatt.Peripheral, a *gatt.Advertisement, rssi int) {
 	if p.Name() != *deviceName {
 		log.Printf("DEBUG : Skipping Peripheral ID:%s, NAME:%s", p.ID(), p.Name())
 		return
 	}
+	foundServer = true
 
 	// Stop scanning once we've got the peripheral we're looking for.
 	p.Device().StopScanning()
@@ -100,7 +114,6 @@ var (
 
 func onPeriphConnected(p gatt.Peripheral, err error) {
 	log.Println("DEBUG : Connected")
-	defer p.Device().CancelConnection(p)
 
 	if err := p.SetMTU(500); err != nil {
 		log.Printf("WARN : Failed to set MTU, err: %s", err)
@@ -145,7 +158,7 @@ func parseService(p gatt.Peripheral) error {
 	for _, c := range cs {
 		msg := "Characteristic  " + c.UUID().String()
 		name := c.Name()
-		log.Println("DEBUG : %s %s", msg, name)
+		log.Printf("DEBUG : %s %s", msg, name)
 		switch c.UUID().String() {
 		case gatt.UUID16(hps.HTTPURIID).String():
 			uriChr = c
@@ -163,16 +176,16 @@ func parseService(p gatt.Peripheral) error {
 		if (c.Properties() & gatt.CharRead) != 0 {
 			b, err := p.ReadCharacteristic(c)
 			if err != nil {
-				fmt.Println("WARN : Failed to read characteristic %s, name: %s, err: %s", c.UUID().String(), c.Name(), err)
+				log.Printf("WARN : Failed to read characteristic %s, name: %s, err: %s", c.UUID().String(), c.Name(), err)
 				continue
 			}
-			fmt.Printf("    value         %x | %q\n", b, b)
+			log.Printf("DEBUG :    value         %x | %q\n", b, b)
 		}
 
 		// Discovery descriptors
 		ds, err := p.DiscoverDescriptors(nil, c)
 		if err != nil {
-			fmt.Printf("WARN : Failed to discover descriptors, err: %s\n", err)
+			log.Printf("WARN : Failed to discover descriptors, err: %s\n", err)
 			continue
 		}
 
@@ -181,37 +194,38 @@ func parseService(p gatt.Peripheral) error {
 			if len(d.Name()) > 0 {
 				msg += " (" + d.Name() + ")"
 			}
-			fmt.Println(msg)
+			log.Println(msg)
 
 			// Read descriptor (could fail, if it's not readable)
 			b, err := p.ReadDescriptor(d)
 			if err != nil {
-				fmt.Printf("DEBUG : Failed to read descriptor, err: %s\n", err)
+				log.Printf("DEBUG : Failed to read descriptor, err: %s\n", err)
 				continue
 			}
-			fmt.Printf("DEBUG :     value         %x | %q\n", b, b)
+			log.Printf("DEBUG :     value         %x | %q\n", b, b)
 		}
 
 		// Subscribe the characteristic, if possible.
 		if (c.Properties() & (gatt.CharNotify | gatt.CharIndicate)) != 0 {
 			f := func(c *gatt.Characteristic, b []byte, err error) {
-				fmt.Printf("DEBUG : notified: % X | %q\n", b, b)
+				log.Printf("DEBUG : notified: % X | %q\n", b, b)
 				if c.UUID().Equal(gatt.UUID16(hps.HTTPStatusCodeID)) {
 					ns, err := hps.DecodeNotifyStatus(b)
 					if err != nil {
-						fmt.Printf("ERROR : decoding NotifyStatus %v\n", err)
+						log.Printf("ERROR : decoding NotifyStatus %v\n", err)
 						return
 					}
-					fmt.Printf("INFO : Status code : %d\n", ns.StatusCode)
-					fmt.Printf("INFO : Headers received : %t\n", ns.HeadersReceived)
-					fmt.Printf("INFO : Headers truncated: %t\n", ns.HeadersTruncated)
-					fmt.Printf("INFO : Body received : %t\n", ns.BodyReceived)
-					fmt.Printf("INFO : Body truncated: %t\n", ns.BodyTruncated)
+					log.Printf("INFO : Status code : %d\n", ns.StatusCode)
+					log.Printf("INFO : Headers received : %t\n", ns.HeadersReceived)
+					log.Printf("INFO : Headers truncated: %t\n", ns.HeadersTruncated)
+					log.Printf("INFO : Body received : %t\n", ns.BodyReceived)
+					log.Printf("INFO : Body truncated: %t\n", ns.BodyTruncated)
+					response = &hps.Response{NotifyStatus: ns}
 					responseChannel <- true
 				}
 			}
 			if err := p.SetNotifyValue(c, f); err != nil {
-				fmt.Printf("WARN : Failed to subscribe characteristic, err: %s\n", err)
+				log.Printf("WARN : Failed to subscribe characteristic, err: %s\n", err)
 				continue
 			}
 		}
@@ -222,6 +236,7 @@ func parseService(p gatt.Peripheral) error {
 
 func callService(p gatt.Peripheral) error {
 	log.Println("DEBUG : call service")
+	defer p.Device().CancelConnection(p)
 
 	log.Println("DEBUG : set URI")
 	urlStr := fmt.Sprintf("%s%s", u.Host, u.EscapedPath())
@@ -259,20 +274,24 @@ func callService(p gatt.Peripheral) error {
 	})
 	gotResponse := <-responseChannel
 	if gotResponse {
-		body, err := p.ReadCharacteristic(bodyChr)
+		response.Body, err = p.ReadCharacteristic(bodyChr)
 		if err != nil {
 			return err
 		}
-		log.Printf("INFO : Body : %v", body)
+		log.Printf("INFO : Body : %v", string(response.Body))
 
-		hdrBytes, err := p.ReadCharacteristic(hdrsChr)
+		response.Headers, err = p.ReadCharacteristic(hdrsChr)
 		if err != nil {
 			return err
 		}
-		headers := hps.DecodeHeaders(hdrBytes)
-		log.Printf("INFO : Headers : %v", headers)
-
+		log.Printf("INFO : Headers : %v", response.DecodedHeaders())
+		log.Printf("INFO : StatusCode : %d", response.NotifyStatus.StatusCode)
+		log.Printf("INFO : Headers received : %t", response.NotifyStatus.HeadersReceived)
+		log.Printf("INFO : Headers truncated : %t", response.NotifyStatus.HeadersTruncated)
+		log.Printf("INFO : Body received : %t", response.NotifyStatus.BodyReceived)
+		log.Printf("INFO : Body truncated : %t", response.NotifyStatus.BodyTruncated)
 	}
+
 	return nil
 }
 
