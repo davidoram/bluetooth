@@ -101,6 +101,17 @@ func sendRequest(r savedRequest) error {
 
 	if err != nil {
 		log.Err(err).Msg("HTTP call failed")
+		response = &hps.Response{
+			NotifyStatus: hps.NotifyStatus{
+				StatusCode:       http.StatusBadGateway,
+				HeadersReceived:  false,
+				HeadersTruncated: false,
+				BodyReceived:     false,
+				BodyTruncated:    false,
+			},
+			Headers: make([]byte, 0),
+			Body:    make([]byte, 0),
+		}
 		return err
 	}
 
@@ -108,6 +119,17 @@ func sendRequest(r savedRequest) error {
 	respBody, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		log.Err(err).Msg("Ready response body failed")
+		response = &hps.Response{
+			NotifyStatus: hps.NotifyStatus{
+				StatusCode:       http.StatusInternalServerError,
+				HeadersReceived:  false,
+				HeadersTruncated: false,
+				BodyReceived:     false,
+				BodyTruncated:    false,
+			},
+			Headers: make([]byte, 0),
+			Body:    make([]byte, 0),
+		}
 		return err
 	}
 
