@@ -6,7 +6,7 @@ on:
 
 jobs:
   release-linux-amd64:
-    name: release linux/amd64
+    name: Upload binaries to release
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -20,4 +20,10 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           goos: ${{ matrix.goos }}
           goarch: ${{ matrix.goarch }}
-          build_command: "go build -o btserver peripheral/main.go"
+          build_command: "go build -o btserver-${{ matrix.goos }}-${{ matrix.goarch }} peripheral/main.go"
+      - uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: btserver-${{ matrix.goos }}-${{ matrix.goarch }}
+          asset_name: btserver-${{ matrix.goos }}-${{ matrix.goarch }}
+          tag: ${{ github.ref }}
