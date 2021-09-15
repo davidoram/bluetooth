@@ -260,7 +260,7 @@ func main() {
 	flag.Parse()
 
 	if *consoleLog {
-		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339})
 	}
 	lvl, err := zerolog.ParseLevel(*level)
 	if err != nil {
@@ -270,6 +270,7 @@ func main() {
 	if err != nil {
 		log.Panic().Str("level", *level).Msg("Invalid log level")
 	}
+	log.Info().Str("level", lvl.String()).Msg("Log level set")
 
 	log.Info().Str("device_name", *deviceName).Msg("creating")
 
