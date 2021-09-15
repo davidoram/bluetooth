@@ -22,3 +22,17 @@ jobs:
           goarch: ${{ matrix.goarch }}
           project_path: "./peripheral"
           binary_name: "btserver"
+      - uses: wangyoucao577/go-release-action@v1.20
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          goos: ${{ matrix.goos }}
+          goarch: ${{ matrix.goarch }}
+          project_path: "./central"
+          binary_name: "btclient"
+      - uses: wangyoucao577/go-release-action@v1.20
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          goos: ${{ matrix.goos }}
+          goarch: ${{ matrix.goarch }}
+          project_path: "./fileserver"
+          binary_name: "fserver"
