@@ -333,27 +333,16 @@ func main() {
 		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339})
 	}
 	lvl, err := zerolog.ParseLevel(*level)
-	if err != nil {
-		lvl = zerolog.DebugLevel
-	}
+	check(err, "Invalid log level")
 	zerolog.SetGlobalLevel(lvl)
-	if err != nil {
-		log.Panic().Str("level", *level).Msg("Invalid log level")
-	}
 	log.Info().Str("level", lvl.String()).Msg("Log level set")
 
 	u, err = url.Parse(*uri)
-	if err != nil {
-		log.Err(err).Msg("Parse error")
-		return
-	}
+	check(err, fmt.Sprintf("Error parsing URL '%s'", *uri))
 	log.Info().Str("device_name", *deviceName).Msg("starting up")
 
 	d, err := gatt.NewDevice(option.DefaultClientOptions...)
-	if err != nil {
-		log.Err(err).Msg("Device failed")
-		return
-	}
+	check(err, "NewDevice failed")
 
 	// Register handlers.
 	d.Handle(
