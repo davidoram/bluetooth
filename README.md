@@ -1,15 +1,40 @@
 # bluetooth
 
-Bluetooth Low Energy client and server for simple communication
+Bluetooth Low Energy HTTP Proxy Service (HPS) client and server.
+
+The following diagram explains how it works:
+
+`btclient` is passed options similar to `curl`, it establishes a bluetooth connection with `btserver` and sends it the HTTP request to be executed on the remote machine.  `btserver` proxys the request through to the `http server`, gets the response, and sends it back to `btclient`.
+-
+
+```
+┌────────────────────┐            ┌────────────────────────────────────────────┐
+│     Machine 2      │            │                 Machine 1                  │
+│                    │            │                                            │
+│                    │            │                                            │
+│                    │            │                                            │
+│  ┌──────────────┐  │            │ ┌────────────┐            ┌──────────────┐ │
+│  │              │──┼────────────┼▶│            │───────────▶│              │ │
+│  │              │  │            │ │            │            │              │ │
+│  │   btclient   │  │ bluetooth  │ │  btserver  │    http    │ http server  │ │
+│  │              │  │            │ │            │            │              │ │
+│  │              │◀─┼────────────┼─│            │◀───────────│              │ │
+│  └──────────────┘  │            │ └────────────┘            └──────────────┘ │
+│                    │            │                                            │
+│                    │            │                                            │
+└────────────────────┘            └────────────────────────────────────────────┘
+```
 
 # Build instructions
 
 Creating a GitHub release will trigger a action to build the following components:
 
-- `btserver` : the server component
+- `btserver` : the server component.
 - `btclient` : the client component
 - `fserver`  : a sample http file server (strictly for testing)
 
+
+# Testing
 
 Tested on Raspberry Pi 3 & 4 running `Ubuntu 21.04 (GNU/Linux 5.11.0-1016-raspi aarch64)`
 
