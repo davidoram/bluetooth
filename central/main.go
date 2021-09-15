@@ -48,6 +48,7 @@ var (
 	headers arrayStr
 	body    *string
 	method  *string
+	output  *string
 
 	level      *string
 	consoleLog *bool
@@ -67,10 +68,11 @@ func init() {
 
 	// id = flag.String("id", hps.PeripheralID, "Peripheral ID to scan for")
 	deviceName = flag.String("name", hps.DeviceName, "Device name to scan for")
-	uri = flag.String("uri", "http://localhost:8100/hello.txt", "uri")
-	flag.Var(&headers, "header", `HTTP headers. eg: -header "Accept=text/plain" -header "X-API-KEY=xyzabc"`)
-	body = flag.String("body", "", "HTTP body to POST/PUT")
-	method = flag.String("verb", "GET", "HTTP verb, eg: GET, PUT, POST, PATCH, DELETE")
+	uri = flag.String("url", "", "Specify a URL to fetch eg: --url http://localhost:8100/hello.txt")
+	flag.Var(&headers, "header", `Specify an HTTP header. This flag can be repeated to send multiple headers. eg: -header "Accept=text/plain"`)
+	body = flag.String("data", "", "Send the specified data in a POST, PUT or PATCH request")
+	method = flag.String("request", "GET", "Specify the request method which can beone of: GET, PUT, POST, PATCH, or DELETE")
+	output = flag.String("output", "", "Write output to <file> instead of stdout. Will overwrite file if it exists.")
 	responseTimeout = flag.Duration("timeout", time.Second*30, "Time to wait for server to return response")
 	level = flag.String("level", "info", "Logging level, eg: panic, fatal, error, warn, info, debug, trace")
 	consoleLog = flag.Bool("console-log", true, "Pass true to enable colorized console logging, false for JSON style logging")
@@ -242,6 +244,12 @@ func parseService(p gatt.Peripheral) error {
 	return nil
 }
 
+func check(err error, msg string) {
+	if err != nil {
+		log.Fatal().Err(err).Msg(msg)
+	}
+}
+
 func callService(p gatt.Peripheral) error {
 	defer p.Device().CancelConnection(p)
 
@@ -287,6 +295,15 @@ func callService(p gatt.Peripheral) error {
 		response.Body, err = p.ReadCharacteristic(bodyChr)
 		if err != nil {
 			return err
+		}
+		// Write to stdout or file
+		if *output == "" {
+			fmt.Print(string(response.Body))
+		} else {
+			f, err := os.Create(*output)
+			check(err, fmt.Sprintf("Error opening file: '%s'", *output))
+			defer f.Close()
+			f.WriteString(string(response.Body))
 		}
 
 		response.Headers, err = p.ReadCharacteristic(hdrsChr)
