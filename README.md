@@ -49,14 +49,17 @@ echo "hi" > hello.txt
 ```
 # Start the bluetooth HPS server
 # Will proxy incoming requests to an http server running locally
-sudo ./btserver
+sudo ./btserver --log-console true --log-level info
 ```
 
 ## On machine 2:
 
 ```
 # Call fserver over bluetooth
-sudo ./btclient --url http://localhost:8100/hello.txt
+sudo ./btclient --log-console=true \
+  --log-level info \
+  --url http://localhost:8100/hello.txt \
+  --request GET
 
 ```
 

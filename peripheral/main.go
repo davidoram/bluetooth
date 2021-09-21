@@ -1,9 +1,8 @@
 package main
 
 /*
- * Peripheral is the server component
- * Accpets HPS requests & calls out to local service
- *
+ * Peripheral is the Http Proxy Service (HPS) server component
+ * It waits for HPS requests & proxies them to local HTTP servers
  */
 
 import (
@@ -39,25 +38,25 @@ func init() {
 
 	// id = flag.String("id", hps.PeripheralID, "Peripheral ID")
 	deviceName = flag.String("name", hps.DeviceName, "Device name to advertise")
-	level = flag.String("level", "info", "Logging level, eg: panic, fatal, error, warn, info, debug, trace")
-	consoleLog = flag.Bool("console-log", true, "Pass true to enable colorized console logging, false for JSON style logging")
+	level = flag.String("log-level", "info", "Logging level, eg: panic, fatal, error, warn, info, debug, trace")
+	consoleLog = flag.Bool("log-console", false, "Pass true to enable colorized console logging, false for JSON style logging")
 }
 
 func onStateChanged(device gatt.Device, s gatt.State) {
 	log.Info().
 		Str("State", s.String()).
 		Msg("State changed")
-	switch s {
-	case gatt.StatePoweredOn:
-		log.Info().
-			Msg("Start scanning")
-		device.Scan([]gatt.UUID{}, true)
-		return
-	default:
-		log.Info().
-			Msg("Stop scanning")
-		device.StopScanning()
-	}
+	// switch s {
+	// case gatt.StatePoweredOn:
+	// 	log.Info().
+	// 		Msg("Start scanning")
+	// 	device.Scan([]gatt.UUID{}, true)
+	// 	return
+	// default:
+	// 	log.Info().
+	// 		Msg("Stop scanning")
+	// 	device.StopScanning()
+	// }
 }
 
 type savedRequest struct {
@@ -270,7 +269,7 @@ func main() {
 	if err != nil {
 		log.Panic().Str("level", *level).Msg("Invalid log level")
 	}
-	log.Info().Str("level", lvl.String()).Msg("Log level set")
+	log.Debug().Str("level", *level).Msg("Log level set")
 
 	log.Info().Str("device_name", *deviceName).Msg("creating")
 
@@ -313,10 +312,14 @@ func main() {
 
 func advertisePeriodically(d gatt.Device, deviceName string, services []gatt.UUID) {
 	log.Info().Msg("Start advertising")
+	var sleepAdvertise = time.Millisecond * 300
+	// Only display a message every minutes
+	sampled := log.Sample(&zerolog.BasicSampler{N: 50})
 	for poweredOn {
 		// Advertise device name and service's UUIDs.
 		d.AdvertiseNameAndServices(hps.DeviceName, services)
-		time.Sleep(time.Millisecond * 100)
+		time.Sleep(sleepAdvertise)
+		sampled.Debug().Msg("advertise device")
 	}
 	log.Info().Msg("Stop advertising")
 }
