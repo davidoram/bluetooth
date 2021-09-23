@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/davidoram/bluetooth/hps"
 	"github.com/paypal/gatt"
@@ -46,12 +45,9 @@ func (c *Connection) CallService(p gatt.Peripheral) error {
 		return c.Error
 	}
 
-	log.Info().Dur("timeout", c.Timeout).Msg("waiting for notification")
-	time.AfterFunc(c.Timeout, func() {
-		log.Warn().Msg("timeout expired, no notification received")
-		c.ResponseChannel <- false
-	})
+	// Wait for a response
 	gotResponse := <-c.ResponseChannel
+
 	if gotResponse {
 		response.Body, c.Error = p.ReadCharacteristic(bodyChr)
 		if c.Error != nil {
