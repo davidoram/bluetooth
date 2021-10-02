@@ -42,23 +42,6 @@ func init() {
 	consoleLog = flag.Bool("log-console", false, "Pass true to enable colorized console logging, false for JSON style logging")
 }
 
-func onStateChanged(device gatt.Device, s gatt.State) {
-	log.Info().
-		Str("State", s.String()).
-		Msg("State changed")
-	// switch s {
-	// case gatt.StatePoweredOn:
-	// 	log.Info().
-	// 		Msg("Start scanning")
-	// 	device.Scan([]gatt.UUID{}, true)
-	// 	return
-	// default:
-	// 	log.Info().
-	// 		Msg("Stop scanning")
-	// 	device.StopScanning()
-	// }
-}
-
 type savedRequest struct {
 	URI     string
 	Headers string
@@ -148,13 +131,14 @@ func sendRequest(r savedRequest) error {
 }
 
 func NewHPSService() *gatt.Service {
+	log.Debug().Msg("New HPSService")
 	s := gatt.NewService(gatt.MustParseUUID(hps.HpsServiceID))
 
 	// URI
 	s.AddCharacteristic(gatt.UUID16(hps.HTTPURIID)).HandleWriteFunc(
 		func(r gatt.Request, data []byte) (status byte) {
 			request.URI = string(data)
-			log.Debug().Str("attr", "URI").Str("val", request.URI).Str("op", "write")
+			log.Debug().Str("attr", "URI").Str("val", request.URI).Str("op", "write").Msg("handle write")
 			return gatt.StatusSuccess
 		})
 
@@ -163,13 +147,13 @@ func NewHPSService() *gatt.Service {
 	hc.HandleWriteFunc(
 		func(r gatt.Request, data []byte) (status byte) {
 			request.Headers = string(data)
-			log.Debug().Str("attr", "headers").Str("val", request.Headers).Str("op", "write")
+			log.Debug().Str("attr", "headers").Str("val", request.Headers).Str("op", "write").Msg("handle write")
 			return gatt.StatusSuccess
 		})
 	hc.HandleReadFunc(
 		func(rsp gatt.ResponseWriter, req *gatt.ReadRequest) {
 			if response != nil {
-				log.Debug().Str("attr", "headers").Str("val", request.Headers).Str("op", "read")
+				log.Debug().Str("attr", "headers").Str("val", request.Headers).Str("op", "read").Msg("handle read")
 				_, err := rsp.Write(response.Headers)
 				if err != nil {
 					log.Err(err).Str("attr", "headers").Str("val", request.Headers).Str("op", "read")
@@ -184,13 +168,13 @@ func NewHPSService() *gatt.Service {
 	hb.HandleWriteFunc(
 		func(r gatt.Request, data []byte) (status byte) {
 			request.Body = data
-			log.Debug().Str("attr", "body").Interface("val", string(request.Body)).Str("op", "write")
+			log.Debug().Str("attr", "body").Interface("val", string(request.Body)).Str("op", "write").Msg("handle write")
 			return gatt.StatusSuccess
 		})
 	hb.HandleReadFunc(
 		func(rsp gatt.ResponseWriter, req *gatt.ReadRequest) {
 			if response != nil {
-				log.Debug().Str("attr", "body").Interface("val", string(response.Body)).Str("op", "read")
+				log.Debug().Str("attr", "body").Interface("val", string(response.Body)).Str("op", "read").Msg("handle read")
 				_, err := rsp.Write(response.Body)
 				if err != nil {
 					log.Err(err).Str("attr", "body").Interface("val", string(response.Body)).Str("op", "read")
@@ -210,14 +194,13 @@ func NewHPSService() *gatt.Service {
 				log.Err(err).Str("attr", "control").Str("sub_attr", "Method").Str("op", "write")
 				return gatt.StatusUnexpectedError // TODO is this correct?
 			}
-			log.Debug().Str("attr", "control").Str("sub_attr", "Method").Str("val", request.Method).Str("op", "write")
+			log.Debug().Str("attr", "control").Str("sub_attr", "Method").Str("val", request.Method).Str("op", "write").Msg("handle write")
 
 			request.Scheme, err = hps.DecodeURLScheme(data[0])
 			if err != nil {
 				log.Err(err).Str("attr", "control").Str("sub_attr", "Scheme").Str("op", "write")
 				return gatt.StatusUnexpectedError // TODO is this correct?
 			}
-			log.Debug().Str("attr", "control").Str("sub_attr", "Scheme").Str("val", request.Scheme).Str("op", "write")
 
 			// Make the API call in the background
 			go sendRequest(*request)
@@ -229,6 +212,7 @@ func NewHPSService() *gatt.Service {
 		})
 
 	scc.HandleWriteFunc(func(r gatt.Request, data []byte) (status byte) {
+		log.Debug().Str("attr", "control").Msg("handle read")
 		return gatt.StatusSuccess
 	})
 	scc.HandleNotifyFunc(
@@ -269,7 +253,7 @@ func main() {
 	if err != nil {
 		log.Panic().Str("level", *level).Msg("Invalid log level")
 	}
-	log.Debug().Str("level", *level).Msg("Log level set")
+	log.Info().Str("level", lvl.String()).Msg("Log level")
 
 	log.Info().Str("device_name", *deviceName).Msg("creating")
 
@@ -312,7 +296,7 @@ func main() {
 
 func advertisePeriodically(d gatt.Device, deviceName string, services []gatt.UUID) {
 	log.Info().Msg("Start advertising")
-	var sleepAdvertise = time.Millisecond * 300
+	var sleepAdvertise = time.Millisecond * 100
 	// Only display a message every minutes
 	sampled := log.Sample(&zerolog.BasicSampler{N: 50})
 	for poweredOn {

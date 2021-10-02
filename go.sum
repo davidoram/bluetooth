@@ -1,4 +1,8 @@
 github.com/coreos/go-systemd/v22 v22.3.2/go.mod h1:Y58oyj3AT4RCenI/lSvhwexgC+NSVTIJ3seZv2GcEnc=
+github.com/davidoram/gatt v0.0.1 h1:rx39klBmJam+jwi+4r2bb4VUgCaDfUc70KCct0kzSLo=
+github.com/davidoram/gatt v0.0.1/go.mod h1:jKTWjD9Mh2uVCsZOTrJJo7sgiGdxecIYHk/4jWncEaE=
+github.com/davidoram/gatt v0.0.2-0.20210928071316-5776ec39d1bb h1:NwmMIbe2PdjKyIG1hNtUrO+bZYjkECs0dTGphK7+Bj4=
+github.com/davidoram/gatt v0.0.2-0.20210928071316-5776ec39d1bb/go.mod h1:jKTWjD9Mh2uVCsZOTrJJo7sgiGdxecIYHk/4jWncEaE=
 github.com/godbus/dbus/v5 v5.0.4/go.mod h1:xhWf0FNVPg57R7Z0UbKHbJfkEywrmjJnf7w5xrFpKfA=
 github.com/paypal/gatt v0.0.0-20151011220935-4ae819d591cf h1:RHRtrMle1AlWsMdCoIQIbq7IB2y8/5qEsUoAzjCCSCw=
 github.com/paypal/gatt v0.0.0-20151011220935-4ae819d591cf/go.mod h1:+AwQL2mK3Pd3S+TUwg0tYQjid0q1txyNUJuuSmz8Kdk=

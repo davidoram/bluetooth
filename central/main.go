@@ -91,7 +91,7 @@ func main() {
 	zerolog.SetGlobalLevel(lvl)
 	log.Debug().Str("level", *level).Msg("Log level set")
 
-	conn := MakeConnection(*responseTimeout)
+	conn := hps.MakeConnection(*responseTimeout)
 
 	u, err = url.Parse(*uri)
 	check(err, fmt.Sprintf("Error parsing URL '%s'", *uri))

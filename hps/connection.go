@@ -59,6 +59,7 @@ func (conn *Connection) Connect() (Response, error) {
 	d.Handle(
 		gatt.PeripheralDiscovered(conn.onPeriphDiscovered),
 		gatt.PeripheralConnected(conn.onPeriphConnected),
+		gatt.PeripheralDisconnected(conn.onPeriphDisconnected),
 	)
 
 	d.Init(conn.onStateChanged)
@@ -100,28 +101,20 @@ func (c *Connection) onPeriphDiscovered(p gatt.Peripheral, a *gatt.Advertisement
 	}
 
 	// Stop scanning once we've got the peripheral we're looking for.
-	log.Info().Str("peripheral_id", p.ID()).Str("name", p.Name()).Msg("Found peripheral")
-	log.Info().Msg("stop scanning")
+	log.Info().Str("peripheral_id", p.ID()).Str("name", p.Name()).Msg("Found HPS server")
 	p.Device().StopScanning()
-
-	log.Debug().Str("local_name", a.LocalName).
-		Int("tx_power_level", a.TxPowerLevel).
-		Bytes("manufacturer_data", a.ManufacturerData).
-		Interface("service_data", a.ServiceData).Msg("scan")
-
-	log.Info().Msg("connect")
 	p.Device().Connect(p)
 }
 
 func (c *Connection) onPeriphConnected(p gatt.Peripheral, err error) {
-	log.Info().Msg("connected")
+	log.Info().Msg("Peripheral connected")
 
 	if err := p.SetMTU(500); err != nil {
 		log.Err(err).Msg("MTU set")
 	}
 
 	// Discovery services
-	ss, err := p.DiscoverServices([]gatt.UUID{gatt.MustParseUUID(HpsServiceID)})
+	ss, err := p.DiscoverServices(nil)
 	if err != nil {
 		log.Err(err).Msg("Discover services")
 		return
@@ -132,7 +125,7 @@ func (c *Connection) onPeriphConnected(p gatt.Peripheral, err error) {
 			c.hpsService = s
 			err := c.parseService(p)
 			if err != nil {
-				log.Err(err).Msg("Discover services")
+				log.Err(err).Msg("Parse services")
 				continue
 			}
 			c.Error = c.CallService(p)
@@ -142,6 +135,11 @@ func (c *Connection) onPeriphConnected(p gatt.Peripheral, err error) {
 			break
 		}
 	}
+}
+
+func (c *Connection) onPeriphDisconnected(p gatt.Peripheral, err error) {
+	log.Info().Msg("Peripheral disconnected")
+	c.cancel()
 }
 
 func (conn *Connection) parseService(p gatt.Peripheral) error {
