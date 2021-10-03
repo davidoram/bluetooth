@@ -3,7 +3,6 @@ package main
 /*
  * Peripheral is the server component
  * Accpets HPS requests & calls out to local service
- *
  */
 
 import (
@@ -11,7 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
-	golog "log"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -20,42 +19,28 @@ import (
 	"github.com/davidoram/bluetooth/hps"
 	"github.com/paypal/gatt"
 	"github.com/paypal/gatt/examples/option"
-
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
 
 var (
 	deviceName *string
-	level      *string
-	consoleLog *bool
 )
 
 func init() {
-	golog.SetOutput(ioutil.Discard)
-	// UNIX Time is faster and smaller than most timestamps
-	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+	log.SetOutput(os.Stdout)
 
 	// id = flag.String("id", hps.PeripheralID, "Peripheral ID")
 	deviceName = flag.String("name", hps.DeviceName, "Device name to advertise")
-	level = flag.String("level", "info", "Logging level, eg: panic, fatal, error, warn, info, debug, trace")
-	consoleLog = flag.Bool("console-log", true, "Pass true to enable colorized console logging, false for JSON style logging")
 }
 
 func onStateChanged(device gatt.Device, s gatt.State) {
-	log.Info().
-		Str("State", s.String()).
-		Msg("State changed")
+	log.Printf("State changed to %s", s.String())
 	switch s {
 	case gatt.StatePoweredOn:
-		log.Info().
-			Msg("Start scanning")
+		log.Printf("start scanning")
 		device.Scan([]gatt.UUID{}, true)
 		return
 	default:
-		log.Info().
-			Msg("Stop scanning")
+		log.Printf("stop scanning")
 		device.StopScanning()
 	}
 }
@@ -88,7 +73,7 @@ func sendRequest(r savedRequest) error {
 		for _, h := range strings.Split(r.Headers, "\n") {
 			values := strings.Split(h, "=")
 			if len(values) != 2 {
-				log.Warn().Str("header", h).Msg("Ingoring invalid header")
+				log.Printf("Warn: ignoring invalid header %s", h)
 				continue
 			}
 			req.Header.Add(values[0], values[1])
@@ -96,11 +81,11 @@ func sendRequest(r savedRequest) error {
 	}
 
 	// Fetch Request
-	log.Info().Msg("Proxying request")
+	log.Printf("proxying request")
 	resp, err := client.Do(req)
 
 	if err != nil {
-		log.Err(err).Msg("HTTP call failed")
+		log.Printf("Error: HTTP call failed")
 		response = &hps.Response{
 			NotifyStatus: hps.NotifyStatus{
 				StatusCode:       http.StatusBadGateway,
@@ -118,7 +103,7 @@ func sendRequest(r savedRequest) error {
 	// Read Response Body
 	respBody, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		log.Err(err).Msg("Ready response body failed")
+		log.Printf("Error: Read response body failed, err %v", err)
 		response = &hps.Response{
 			NotifyStatus: hps.NotifyStatus{
 				StatusCode:       http.StatusInternalServerError,
@@ -155,7 +140,7 @@ func NewHPSService() *gatt.Service {
 	s.AddCharacteristic(gatt.UUID16(hps.HTTPURIID)).HandleWriteFunc(
 		func(r gatt.Request, data []byte) (status byte) {
 			request.URI = string(data)
-			log.Debug().Str("attr", "URI").Str("val", request.URI).Str("op", "write")
+			log.Printf("url: %s", request.URI)
 			return gatt.StatusSuccess
 		})
 
@@ -164,19 +149,18 @@ func NewHPSService() *gatt.Service {
 	hc.HandleWriteFunc(
 		func(r gatt.Request, data []byte) (status byte) {
 			request.Headers = string(data)
-			log.Debug().Str("attr", "headers").Str("val", request.Headers).Str("op", "write")
+			log.Printf("write headers: %s", request.Headers)
 			return gatt.StatusSuccess
 		})
 	hc.HandleReadFunc(
 		func(rsp gatt.ResponseWriter, req *gatt.ReadRequest) {
 			if response != nil {
-				log.Debug().Str("attr", "headers").Str("val", request.Headers).Str("op", "read")
 				_, err := rsp.Write(response.Headers)
 				if err != nil {
-					log.Err(err).Str("attr", "headers").Str("val", request.Headers).Str("op", "read")
+					log.Printf("Error: Read headers %v", err)
 				}
 			} else {
-				log.Warn().Str("attr", "headers").Str("op", "read").Msg("Read received before response has arrived")
+				log.Printf("Warn: Read headers received before response has arrived")
 			}
 		})
 
@@ -185,19 +169,18 @@ func NewHPSService() *gatt.Service {
 	hb.HandleWriteFunc(
 		func(r gatt.Request, data []byte) (status byte) {
 			request.Body = data
-			log.Debug().Str("attr", "body").Interface("val", string(request.Body)).Str("op", "write")
+			log.Printf("write body: %s", string(request.Body))
 			return gatt.StatusSuccess
 		})
 	hb.HandleReadFunc(
 		func(rsp gatt.ResponseWriter, req *gatt.ReadRequest) {
 			if response != nil {
-				log.Debug().Str("attr", "body").Interface("val", string(response.Body)).Str("op", "read")
 				_, err := rsp.Write(response.Body)
 				if err != nil {
-					log.Err(err).Str("attr", "body").Interface("val", string(response.Body)).Str("op", "read")
+					log.Printf("Error: Read body %v", err)
 				}
 			} else {
-				log.Warn().Str("attr", "body").Str("op", "read").Msg("Read received before response has arrived")
+				log.Printf("Warn: Read body received before response has arrived")
 			}
 		})
 
@@ -206,19 +189,18 @@ func NewHPSService() *gatt.Service {
 	s.AddCharacteristic(gatt.UUID16(hps.HTTPControlPointID)).HandleWriteFunc(
 		func(r gatt.Request, data []byte) (status byte) {
 			var err error
+			log.Printf("Decoding control %d", uint(data[0]))
 			request.Method, err = hps.DecodeHttpMethod(data[0])
 			if err != nil {
-				log.Err(err).Str("attr", "control").Str("sub_attr", "Method").Str("op", "write")
+				log.Printf("Error: Write control %v", err)
 				return gatt.StatusUnexpectedError // TODO is this correct?
 			}
-			log.Debug().Str("attr", "control").Str("sub_attr", "Method").Str("val", request.Method).Str("op", "write")
 
 			request.Scheme, err = hps.DecodeURLScheme(data[0])
 			if err != nil {
-				log.Err(err).Str("attr", "control").Str("sub_attr", "Scheme").Str("op", "write")
+				log.Printf("Error: Decode scheme %v", err)
 				return gatt.StatusUnexpectedError // TODO is this correct?
 			}
-			log.Debug().Str("attr", "control").Str("sub_attr", "Scheme").Str("val", request.Scheme).Str("op", "write")
 
 			// Make the API call in the background
 			go sendRequest(*request)
@@ -236,10 +218,10 @@ func NewHPSService() *gatt.Service {
 		func(r gatt.Request, n gatt.Notifier) {
 			for !n.Done() {
 				if response != nil && !response.Notified {
-					log.Info().Str("attr", "status_code").Int("val", response.NotifyStatus.StatusCode).Str("op", "notify").Msg("notify response")
+					log.Printf("notify status code: %d", response.NotifyStatus.StatusCode)
 					_, err := n.Write(response.NotifyStatus.Encode())
 					if err != nil {
-						log.Err(err).Str("attr", "status_code").Int("val", response.NotifyStatus.StatusCode).Str("op", "notify")
+						log.Printf("Error: notify status code %v", err)
 					}
 					response.Notified = true
 				} else {
@@ -259,24 +241,11 @@ func main() {
 
 	flag.Parse()
 
-	if *consoleLog {
-		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339})
-	}
-	lvl, err := zerolog.ParseLevel(*level)
-	if err != nil {
-		lvl = zerolog.DebugLevel
-	}
-	zerolog.SetGlobalLevel(lvl)
-	if err != nil {
-		log.Panic().Str("level", *level).Msg("Invalid log level")
-	}
-	log.Info().Str("level", lvl.String()).Msg("Log level set")
-
-	log.Info().Str("device_name", *deviceName).Msg("creating")
+	log.Printf("Make device name: %s", *deviceName)
 
 	d, err := gatt.NewDevice(option.DefaultServerOptions...)
 	if err != nil {
-		log.Err(err)
+		log.Fatalf("Error: new device %v", err)
 	}
 
 	// Init space for the next request
@@ -285,16 +254,16 @@ func main() {
 	// Register optional handlers.
 	d.Handle(
 		gatt.CentralConnected(func(c gatt.Central) {
-			log.Info().Str("central_id", c.ID()).Msg("Central connected")
+			log.Printf("connected central_id: %s", c.ID())
 		}),
 		gatt.CentralDisconnected(func(c gatt.Central) {
-			log.Info().Str("central_id", c.ID()).Msg("Central disconnected")
+			log.Printf("disconnected central_id: %s", c.ID())
 		}),
 	)
 
 	// A mandatory handler for monitoring device state.
 	onStateChanged := func(d gatt.Device, s gatt.State) {
-		log.Info().Str("state", s.String()).Msg("State changed")
+		log.Printf("state changed %s", s.String())
 		switch s {
 		case gatt.StatePoweredOn:
 			poweredOn = true
@@ -312,11 +281,11 @@ func main() {
 }
 
 func advertisePeriodically(d gatt.Device, deviceName string, services []gatt.UUID) {
-	log.Info().Msg("Start advertising")
+	log.Printf("start advertising")
 	for poweredOn {
 		// Advertise device name and service's UUIDs.
 		d.AdvertiseNameAndServices(hps.DeviceName, services)
 		time.Sleep(time.Millisecond * 100)
 	}
-	log.Info().Msg("Stop advertising")
+	log.Printf("stop advertising")
 }
