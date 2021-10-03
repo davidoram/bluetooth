@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/paypal/gatt"
@@ -225,11 +226,11 @@ func (client *Client) parseService(p gatt.Peripheral) error {
 						log.Printf("Error decoding notify status err: %v", client.lastError)
 						return
 					}
-					log.Printf("http_status: %d", ns.StatusCode)
-					log.Printf("headers: %v", ns.HeadersReceived)
-					log.Printf("headers_truncated: %t", ns.HeadersTruncated)
-					log.Printf("body_received: %t", ns.BodyReceived)
-					log.Printf("body_truncated: %t", ns.BodyTruncated)
+					log.Printf("got headers?       %t", ns.HeadersReceived)
+					log.Printf("headers truncated? %t", ns.HeadersTruncated)
+					log.Printf("body received?     %t", ns.BodyReceived)
+					log.Printf("body truncated?    %t", ns.BodyTruncated)
+					log.Printf("status:  %d", ns.StatusCode)
 					client.response = &Response{NotifyStatus: ns}
 					client.responseChannel <- true
 				}
@@ -278,7 +279,7 @@ func (client *Client) callService(p gatt.Peripheral) error {
 		return client.lastError
 	}
 
-	log.Printf("waiting for notification, timeout after %d", client.ResponseTimeout)
+	log.Printf("waiting for notification, timeout after %v", client.ResponseTimeout)
 	time.AfterFunc(client.ResponseTimeout, func() {
 		log.Printf("timeout expired, no notification received")
 		client.responseChannel <- false
@@ -289,17 +290,23 @@ func (client *Client) callService(p gatt.Peripheral) error {
 		if client.lastError != nil {
 			return client.lastError
 		}
-		log.Printf("received body: %s", string(client.response.Body))
+		log.Printf("body:    %s", string(client.response.Body))
 
 		client.response.Headers, client.lastError = p.ReadCharacteristic(client.hdrsChr)
 		if client.lastError != nil {
 			return client.lastError
 		}
-		log.Printf("received headers: %s", string(client.response.Headers))
+		log.Printf("headers: %v", formatHeaders(client.response.Headers))
 
 		// all done no errors!
 		client.lastError = nil
 		client.done <- true
 	}
 	return nil
+}
+
+func formatHeaders(b []byte) []string {
+	s := string(b)
+	sa := strings.Split(s, "\n")
+	return sa
 }
