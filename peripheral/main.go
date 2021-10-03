@@ -3,7 +3,6 @@ package main
 /*
  * Peripheral is the server component
  * Accpets HPS requests & calls out to local service
- *
  */
 
 import (
@@ -190,6 +189,7 @@ func NewHPSService() *gatt.Service {
 	s.AddCharacteristic(gatt.UUID16(hps.HTTPControlPointID)).HandleWriteFunc(
 		func(r gatt.Request, data []byte) (status byte) {
 			var err error
+			log.Printf("Decoding control %d", uint(data[0]))
 			request.Method, err = hps.DecodeHttpMethod(data[0])
 			if err != nil {
 				log.Printf("Error: Write control %v", err)

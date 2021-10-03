@@ -249,21 +249,21 @@ func (client *Client) callService(p gatt.Peripheral) error {
 	defer p.Device().CancelConnection(p)
 
 	log.Printf("call service")
-	log.Printf("%s %s", client.method, client.u.String())
-	log.Printf("headers: %v", client.headers)
-	log.Printf("method: %v", client.headers)
 
 	urlStr := fmt.Sprintf("%s%s", client.u.Host, client.u.EscapedPath())
+	log.Printf("write method + uri: %s %s", client.method, client.u.String())
 	client.lastError = p.WriteCharacteristic(client.uriChr, []byte(urlStr), true)
 	if client.lastError != nil {
 		return client.lastError
 	}
 
+	log.Printf("write headers: %v", client.headers)
 	client.lastError = p.WriteCharacteristic(client.hdrsChr, []byte(client.headers.String()), true)
 	if client.lastError != nil {
 		return client.lastError
 	}
 
+	log.Printf("write body: %s", client.body)
 	client.lastError = p.WriteCharacteristic(client.bodyChr, []byte(client.body), true)
 	if client.lastError != nil {
 		return client.lastError
@@ -274,6 +274,7 @@ func (client *Client) callService(p gatt.Peripheral) error {
 	if client.lastError != nil {
 		return client.lastError
 	}
+	log.Printf("write control: %d", code)
 	client.lastError = p.WriteCharacteristic(client.controlChr, []byte{code}, false)
 	if client.lastError != nil {
 		return client.lastError
