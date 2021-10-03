@@ -2,6 +2,7 @@ package hps
 
 // Package hps provides HPS/HTTP client  implementations
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -13,12 +14,15 @@ import (
 )
 
 var (
-	UnknownError = errors.New("Unknown error")
+	UnknownError           = errors.New("Unknown error")
+	ConnectionTimeoutError = errors.New("Connection timeout")
+	DisconnectedError      = errors.New("Disconnected")
 )
 
 type Client struct {
 	DebugLog        bool
 	DeviceName      string
+	ConnectTimeout  time.Duration
 	ResponseTimeout time.Duration
 
 	uri     string
@@ -48,6 +52,7 @@ func MakeClient() *Client {
 		done:            make(chan bool, 1),
 		response:        &Response{},
 	}
+	c.ConnectTimeout, _ = time.ParseDuration("5s")
 	c.ResponseTimeout, _ = time.ParseDuration("5s")
 	return &c
 }
@@ -77,7 +82,10 @@ func (client *Client) Do(uri, body, method string, headers ArrayStr) (Response, 
 	)
 
 	d.Init(client.onStateChanged)
-	<-client.done
+	done := <-client.done
+	if !done && client.lastError == nil {
+		client.lastError = DisconnectedError
+	}
 	return *client.response, client.lastError
 }
 
@@ -93,9 +101,25 @@ func (client *Client) onStateChanged(d gatt.Device, s gatt.State) {
 
 func (client *Client) scanPeriodically(d gatt.Device) {
 	log.Printf("start periodic scan")
-	for !client.foundServer {
-		d.Scan([]gatt.UUID{}, false)
-		time.Sleep(time.Millisecond * 100)
+
+	// Create a new context
+	ctx := context.Background()
+	// Create a new context, with its cancellation function
+	// from the original context
+	ctx, _ = context.WithTimeout(ctx, client.ConnectTimeout)
+
+	timeout := false
+	for !client.foundServer && !timeout {
+		select {
+		case <-ctx.Done():
+			log.Printf("Connection timeout")
+			timeout = true
+			client.lastError = ConnectionTimeoutError
+			client.done <- false
+		default:
+			d.Scan([]gatt.UUID{}, false)
+			time.Sleep(time.Millisecond * 100)
+		}
 	}
 	log.Printf("stop periodic scan")
 }
@@ -148,7 +172,7 @@ func (client *Client) onPeriphConnected(p gatt.Peripheral, err error) {
 
 func (client *Client) onPeriphDisconnected(p gatt.Peripheral, err error) {
 	log.Printf("disconnected")
-	close(client.done)
+	client.done <- false
 }
 
 func (client *Client) parseService(p gatt.Peripheral) error {
