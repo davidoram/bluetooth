@@ -25,8 +25,6 @@ var (
 	body    *string
 	method  *string
 
-	level *string
-
 	responseTimeout *time.Duration
 )
 
@@ -40,13 +38,11 @@ func init() {
 	body = flag.String("body", "", "HTTP body to POST/PUT")
 	method = flag.String("verb", "GET", "HTTP verb, eg: GET, PUT, POST, PATCH, DELETE")
 	responseTimeout = flag.Duration("timeout", time.Second*5, "Time to wait for server to return response")
-	level = flag.String("level", "info", "Logging level, eg: panic, fatal, error, warn, info, debug, trace")
 
 }
 
 func main() {
 	flag.Parse()
-	log.Printf("Log level set %s", *level)
 
 	u, err := url.Parse(*uri)
 	if err != nil {
@@ -57,8 +53,8 @@ func main() {
 	headers := hps.ArrayStr{}
 	_, err = c.Do(u.String(), *body, *method, headers)
 	if err != nil {
-		log.Printf("Do error: %s", err)
+		log.Printf("Error: %s", err)
 		return
 	}
-	log.Printf("Done")
+	log.Printf("Ok")
 }

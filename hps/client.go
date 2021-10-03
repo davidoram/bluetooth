@@ -186,7 +186,7 @@ func (client *Client) parseService(p gatt.Peripheral) error {
 		return client.lastError
 	}
 	for _, c := range cs {
-		log.Printf("discovered characteristic name: %s", c.Name())
+		// log.Printf("discovered characteristic name: %s", c.Name())
 		switch c.UUID().String() {
 		case gatt.UUID16(HTTPURIID).String():
 			client.uriChr = c
