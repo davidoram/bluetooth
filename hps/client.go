@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	GenericError = errors.New("Generic error")
+	UnknownError = errors.New("Unknown error")
 )
 
 type Client struct {
@@ -43,7 +43,7 @@ func MakeClient() *Client {
 
 	c := Client{
 		DeviceName:      DeviceName,
-		lastError:       GenericError,
+		lastError:       UnknownError,
 		responseChannel: make(chan bool, 1),
 		done:            make(chan bool, 1),
 		response:        &Response{},
@@ -63,9 +63,10 @@ func (client *Client) Do(uri, body, method string, headers ArrayStr) (Response, 
 	client.body = body
 	client.headers = headers
 
-	d, err := gatt.NewDevice(option.DefaultClientOptions...)
-	if err != nil {
-		return *client.response, err
+	var d gatt.Device
+	d, client.lastError = gatt.NewDevice(option.DefaultClientOptions...)
+	if client.lastError != nil {
+		return *client.response, client.lastError
 	}
 
 	// Register handlers.
@@ -115,14 +116,16 @@ func (client *Client) onPeriphDiscovered(p gatt.Peripheral, a *gatt.Advertisemen
 func (client *Client) onPeriphConnected(p gatt.Peripheral, err error) {
 	log.Printf("connected")
 
-	if err := p.SetMTU(500); err != nil {
-		log.Printf("Error setting MTU, err: %v", err)
+	if client.lastError = p.SetMTU(500); client.lastError != nil {
+		log.Printf("Error setting MTU, err: %v", client.lastError)
+		return
 	}
 
 	// Discovery services
-	ss, err := p.DiscoverServices(nil)
-	if err != nil {
-		log.Printf("Error Discover services, err: %v", err)
+	var ss []*gatt.Service
+	ss, client.lastError = p.DiscoverServices(nil)
+	if client.lastError != nil {
+		log.Printf("Error Discover services, err: %v", client.lastError)
 		return
 	}
 
@@ -131,12 +134,12 @@ func (client *Client) onPeriphConnected(p gatt.Peripheral, err error) {
 			client.hpsService = s
 			err := client.parseService(p)
 			if err != nil {
-				log.Printf("Error Parsing service, err: %v", err)
+				log.Printf("Warning Parsing service, err: %v", err)
 				continue
 			}
-			err = client.callService(p)
-			if err != nil {
-				log.Printf("Error Calling service, err: %v", err)
+			client.lastError = client.callService(p)
+			if client.lastError != nil {
+				log.Printf("Error Calling service, err: %v", client.lastError)
 			}
 			break
 		}
@@ -152,9 +155,10 @@ func (client *Client) parseService(p gatt.Peripheral) error {
 	log.Printf("parse service")
 
 	// Discovery characteristics
-	cs, err := p.DiscoverCharacteristics(nil, client.hpsService)
-	if err != nil {
-		return err
+	var cs []*gatt.Characteristic
+	cs, client.lastError = p.DiscoverCharacteristics(nil, client.hpsService)
+	if client.lastError != nil {
+		return client.lastError
 	}
 	for _, c := range cs {
 		log.Printf("discovered characteristic name: %s", c.Name())
@@ -171,21 +175,10 @@ func (client *Client) parseService(p gatt.Peripheral) error {
 			client.statusChr = c
 		}
 
-		// // Read the characteristic, if possible.
-		// if (c.Properties() & gatt.CharRead) != 0 {
-		// 	log.Debug(err).Str("name", c.Name()).Msg("failed to read")
-		// 	b, err := p.ReadCharacteristic(c)
-		// 	if err != nil {
-		// 		log.Err(err).Str("name", c.Name()).Msg("failed to read")
-		// 		continue
-		// 	}
-		// 	log.Err(err).Bytes("value",b).Msg("read")
-		// }
-
 		// Discovery descriptors
 		ds, err := p.DiscoverDescriptors(nil, c)
 		if err != nil {
-			log.Printf("Error discover descriptors, err: %v", err)
+			log.Printf("Warn discover descriptors, err: %v", err)
 			continue
 		}
 
@@ -202,9 +195,10 @@ func (client *Client) parseService(p gatt.Peripheral) error {
 		if (c.Properties() & (gatt.CharNotify | gatt.CharIndicate)) != 0 {
 			f := func(c *gatt.Characteristic, b []byte, err error) {
 				if c.UUID().Equal(gatt.UUID16(HTTPStatusCodeID)) {
-					ns, err := DecodeNotifyStatus(b)
-					if err != nil {
-						log.Printf("Error decoding notify status err: %v", err)
+					var ns NotifyStatus
+					ns, client.lastError = DecodeNotifyStatus(b)
+					if client.lastError != nil {
+						log.Printf("Error decoding notify status err: %v", client.lastError)
 						return
 					}
 					log.Printf("http_status: %d", ns.StatusCode)
@@ -216,8 +210,8 @@ func (client *Client) parseService(p gatt.Peripheral) error {
 					client.responseChannel <- true
 				}
 			}
-			if err := p.SetNotifyValue(c, f); err != nil {
-				log.Printf("Error subscribing to notifications, err: %v", err)
+			if client.lastError = p.SetNotifyValue(c, f); client.lastError != nil {
+				log.Printf("Error subscribing to notifications, err: %v", client.lastError)
 				continue
 			}
 		}
@@ -235,28 +229,29 @@ func (client *Client) callService(p gatt.Peripheral) error {
 	log.Printf("method: %v", client.headers)
 
 	urlStr := fmt.Sprintf("%s%s", client.u.Host, client.u.EscapedPath())
-	err := p.WriteCharacteristic(client.uriChr, []byte(urlStr), true)
-	if err != nil {
-		return err
+	client.lastError = p.WriteCharacteristic(client.uriChr, []byte(urlStr), true)
+	if client.lastError != nil {
+		return client.lastError
 	}
 
-	err = p.WriteCharacteristic(client.hdrsChr, []byte(client.headers.String()), true)
-	if err != nil {
-		return err
+	client.lastError = p.WriteCharacteristic(client.hdrsChr, []byte(client.headers.String()), true)
+	if client.lastError != nil {
+		return client.lastError
 	}
 
-	err = p.WriteCharacteristic(client.bodyChr, []byte(client.body), true)
-	if err != nil {
-		return err
+	client.lastError = p.WriteCharacteristic(client.bodyChr, []byte(client.body), true)
+	if client.lastError != nil {
+		return client.lastError
 	}
 
-	code, err := EncodeMethodScheme(client.method, client.u.Scheme)
-	if err != nil {
-		return err
+	var code uint8
+	code, client.lastError = EncodeMethodScheme(client.method, client.u.Scheme)
+	if client.lastError != nil {
+		return client.lastError
 	}
-	err = p.WriteCharacteristic(client.controlChr, []byte{code}, false)
-	if err != nil {
-		return err
+	client.lastError = p.WriteCharacteristic(client.controlChr, []byte{code}, false)
+	if client.lastError != nil {
+		return client.lastError
 	}
 
 	log.Printf("waiting for notification, timeout after %d", client.ResponseTimeout)
@@ -266,15 +261,15 @@ func (client *Client) callService(p gatt.Peripheral) error {
 	})
 	gotResponse := <-client.responseChannel
 	if gotResponse {
-		client.response.Body, err = p.ReadCharacteristic(client.bodyChr)
-		if err != nil {
-			return err
+		client.response.Body, client.lastError = p.ReadCharacteristic(client.bodyChr)
+		if client.lastError != nil {
+			return client.lastError
 		}
 		log.Printf("received body: %s", string(client.response.Body))
 
-		client.response.Headers, err = p.ReadCharacteristic(client.hdrsChr)
-		if err != nil {
-			return err
+		client.response.Headers, client.lastError = p.ReadCharacteristic(client.hdrsChr)
+		if client.lastError != nil {
+			return client.lastError
 		}
 		log.Printf("received headers: %s", string(client.response.Headers))
 
