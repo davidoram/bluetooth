@@ -1,6 +1,6 @@
-# bluetooth
+# bluetooth - not working
 
-Bluetooth Low Energy client and server for simple communication
+Bluetooth Low Energy client and server for simple communication. Not working
 
 # Build instructions
 
